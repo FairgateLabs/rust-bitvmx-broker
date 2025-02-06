@@ -26,9 +26,13 @@ struct Flags {
     #[clap(long)]
     port: u16,
 
+    /// Sets the id to send the message from.
+    #[clap(long)]
+    from: Option<u32>,
+
     /// Sets the id to send the message to.
     #[clap(long)]
-    id: u32,
+    dest: u32,
 
     /// Message to send.
     #[clap(long)]
@@ -43,12 +47,12 @@ fn main() -> anyhow::Result<()> {
 
     match &flags.msg {
         Some(msg) => {
-            let _ret = client.send_msg(flags.id, msg.clone());
+            let _ret = client.send_msg(flags.from.unwrap(), flags.dest, msg.clone());
         }
         None => {
-            let msgs = client.get_msg(flags.id);
-            for msg in msgs {
-                println!("{}", msg);
+            while let Some(msg) = client.get_msg(flags.dest).unwrap_or(None) {
+                println!("{:?}", msg);
+                client.ack(flags.dest, msg.uid).unwrap();
             }
         }
     }

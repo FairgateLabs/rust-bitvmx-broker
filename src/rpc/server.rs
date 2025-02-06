@@ -12,7 +12,7 @@ use tarpc::{
 use tokio::sync::mpsc;
 use tracing::info;
 
-use super::BrokerConfig;
+use super::{BrokerConfig, Message, StorageApi};
 
 #[derive(Clone)]
 struct BrokerServer<S: StorageApi> {
@@ -36,21 +36,17 @@ impl<S> Broker for BrokerServer<S>
 where
     S: StorageApi + 'static + Send + Sync,
 {
-    async fn send_msg(self, _: context::Context, id: u32, msg: String) -> bool {
-        self.storage.lock().unwrap().insert(id, msg);
+    async fn send(self, _: context::Context, from: u32, dest: u32, msg: String) -> bool {
+        self.storage.lock().unwrap().insert(from, dest, msg);
         true
     }
-    async fn get_msg(self, _: context::Context, id: u32) -> Vec<String> {
-        let mut ret = vec![];
-        let mut max_msgs = 100;
-        while let Some(msg) = self.storage.lock().unwrap().pop(id) {
-            ret.push(msg);
-            max_msgs -= 1;
-            if max_msgs == 0 {
-                break;
-            }
-        }
-        ret
+
+    async fn get(self, _: context::Context, dest: u32) -> Option<Message> {
+        self.storage.lock().unwrap().get(dest)
+    }
+
+    async fn ack(self, _: context::Context, dest: u32, uid: u64) -> bool {
+        self.storage.lock().unwrap().remove(dest, uid)
     }
 }
 
@@ -59,12 +55,6 @@ async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
 }
 
 type ShutDownSignal = mpsc::Receiver<()>;
-
-pub trait StorageApi {
-    fn pop(&mut self, id: u32) -> Option<String>;
-    fn insert(&mut self, id: u32, msg: String);
-}
-
 pub async fn run<S>(
     mut shutdown: ShutDownSignal,
     storage: Arc<Mutex<S>>,

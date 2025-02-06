@@ -9,7 +9,7 @@ use std::{
 };
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
-use bitvmx_broker::rpc::{server::StorageApi, sync_server::BrokerSync, BrokerConfig};
+use bitvmx_broker::rpc::{sync_server::BrokerSync, BrokerConfig, Message, StorageApi};
 use clap::Parser;
 use tracing::info;
 
@@ -18,11 +18,6 @@ struct Flags {
     /// Sets the port number to listen on.
     #[clap(long)]
     port: u16,
-}
-
-#[derive(Clone)]
-pub struct MemStorage {
-    data: HashMap<u32, VecDeque<String>>,
 }
 
 pub fn init_tracing() -> anyhow::Result<()> {
@@ -37,21 +32,49 @@ pub fn init_tracing() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[derive(Clone)]
+pub struct MemStorage {
+    uid: u64,
+    data: HashMap<u32, VecDeque<Message>>,
+}
+
 impl MemStorage {
     pub fn new() -> Self {
         Self {
+            uid: 0,
             data: HashMap::new(),
         }
     }
 }
 
 impl StorageApi for MemStorage {
-    fn pop(&mut self, id: u32) -> Option<String> {
-        self.data.get_mut(&id)?.pop_front()
+    fn get(&mut self, dest: u32) -> Option<Message> {
+        self.data.get_mut(&dest)?.front().cloned()
     }
 
-    fn insert(&mut self, id: u32, msg: String) {
-        self.data.entry(id).or_default().push_back(msg);
+    fn remove(&mut self, dest: u32, uid: u64) -> bool {
+        let data = self.data.get_mut(&dest);
+        if let Some(data) = data {
+            if data.front().map(|m| m.uid) == Some(uid) {
+                data.pop_front();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    fn insert(&mut self, from: u32, dest: u32, msg: String) {
+        self.uid += 1;
+        let msg = Message {
+            uid: self.uid,
+            from,
+            msg,
+        };
+        self.data.entry(dest).or_default().push_back(msg);
     }
 }
 
@@ -82,11 +105,6 @@ fn main() {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
 
     let mut server = BrokerSync::new(config, storage.clone());
-
-    storage
-        .lock()
-        .unwrap()
-        .insert(1, "Hello everyone".to_string());
 
     wait_ctrl();
     server.close();

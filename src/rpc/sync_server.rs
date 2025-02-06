@@ -2,10 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::{runtime::Runtime, sync::mpsc};
 
-use super::{
-    server::{run, StorageApi},
-    BrokerConfig,
-};
+use super::{server::run, BrokerConfig, StorageApi};
 
 pub struct BrokerSync {
     rt: Runtime,
