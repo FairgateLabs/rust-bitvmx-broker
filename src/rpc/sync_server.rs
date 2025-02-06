@@ -10,7 +10,7 @@ pub struct BrokerSync {
 }
 
 impl BrokerSync {
-    pub fn new<S>(config: BrokerConfig, storage: Arc<Mutex<S>>) -> Self
+    pub fn new<S>(config: &BrokerConfig, storage: Arc<Mutex<S>>) -> Self
     where
         S: 'static + Send + Sync + StorageApi + Clone,
     {
@@ -18,14 +18,14 @@ impl BrokerSync {
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
-        rt.spawn(run(shutdown_rx, storage.clone(), config));
+        rt.spawn(run(shutdown_rx, storage.clone(), config.clone()));
 
         Self { rt, shutdown_tx }
     }
 
     pub fn close(&mut self) {
         self.rt.block_on(async {
-            self.shutdown_tx.send(()).await.unwrap();
+            let _ = self.shutdown_tx.send(()).await;
         });
     }
 }

@@ -104,7 +104,7 @@ fn main() {
 
     let storage = Arc::new(Mutex::new(MemStorage::new()));
 
-    let mut server = BrokerSync::new(config, storage.clone());
+    let mut server = BrokerSync::new(&config, storage.clone());
 
     wait_ctrl();
     server.close();

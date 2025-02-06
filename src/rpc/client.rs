@@ -12,7 +12,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(config: BrokerConfig) -> Self {
+    pub fn new(config: &BrokerConfig) -> Self {
         let rt = Runtime::new().unwrap();
         let address = SocketAddr::new(config.ip.unwrap(), config.port);
         Self { rt, address }

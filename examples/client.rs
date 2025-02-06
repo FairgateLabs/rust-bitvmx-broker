@@ -43,7 +43,7 @@ fn main() -> anyhow::Result<()> {
     let flags = Flags::parse();
     init_tracing()?;
 
-    let client = Client::new(BrokerConfig::new(flags.port, Some(flags.ip_addr)));
+    let client = Client::new(&BrokerConfig::new(flags.port, Some(flags.ip_addr)));
 
     match &flags.msg {
         Some(msg) => {
