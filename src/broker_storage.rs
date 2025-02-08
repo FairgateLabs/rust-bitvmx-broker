@@ -21,6 +21,10 @@ impl BrokerStorage {
     }
 }
 
+fn format_uid(uid: u64) -> String {
+    format!("{:0>20}", uid)
+}
+
 impl StorageApi for BrokerStorage {
     fn get(&mut self, dest: u32) -> Option<Message> {
         let mut keys = self
@@ -48,7 +52,7 @@ impl StorageApi for BrokerStorage {
             .storage
             .lock()
             .unwrap()
-            .partial_compare_keys(&format!("broker_msg_{dest}_{uid}"))
+            .partial_compare_keys(&format!("broker_msg_{dest}_{}", format_uid(uid)))
             .unwrap_or(vec![]);
         if keys.len() != 1 {
             return false;
@@ -74,10 +78,10 @@ impl StorageApi for BrokerStorage {
             .lock()
             .unwrap()
             .set("broker_current_uid", uid, None);
-        let _ =
-            self.storage
-                .lock()
-                .unwrap()
-                .set(&format!("broker_msg_{dest}_{uid}_{from}"), msg, None);
+        let _ = self.storage.lock().unwrap().set(
+            &format!("broker_msg_{dest}_{}_{from}", format_uid(uid)),
+            msg,
+            None,
+        );
     }
 }
