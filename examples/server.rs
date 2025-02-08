@@ -1,5 +1,4 @@
 use std::{
-    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -9,7 +8,7 @@ use std::{
 };
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
-use bitvmx_broker::rpc::{sync_server::BrokerSync, BrokerConfig, Message, StorageApi};
+use bitvmx_broker::rpc::{sync_server::BrokerSync, BrokerConfig};
 use clap::Parser;
 use tracing::info;
 
@@ -32,52 +31,6 @@ pub fn init_tracing() -> anyhow::Result<()> {
 
     Ok(())
 }
-
-#[derive(Clone)]
-pub struct MemStorage {
-    uid: u64,
-    data: HashMap<u32, VecDeque<Message>>,
-}
-
-impl MemStorage {
-    pub fn new() -> Self {
-        Self {
-            uid: 0,
-            data: HashMap::new(),
-        }
-    }
-}
-
-impl StorageApi for MemStorage {
-    fn get(&mut self, dest: u32) -> Option<Message> {
-        self.data.get_mut(&dest)?.front().cloned()
-    }
-
-    fn remove(&mut self, dest: u32, uid: u64) -> bool {
-        let data = self.data.get_mut(&dest);
-        if let Some(data) = data {
-            if data.front().map(|m| m.uid) == Some(uid) {
-                data.pop_front();
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
-
-    fn insert(&mut self, from: u32, dest: u32, msg: String) {
-        self.uid += 1;
-        let msg = Message {
-            uid: self.uid,
-            from,
-            msg,
-        };
-        self.data.entry(dest).or_default().push_back(msg);
-    }
-}
-
 fn wait_ctrl() {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -102,7 +55,18 @@ fn main() {
         ip: None,
     };
 
-    let storage = Arc::new(Mutex::new(MemStorage::new()));
+    #[cfg(not(feature = "storagebackend"))]
+    let storage = Arc::new(Mutex::new(
+        bitvmx_broker::broker_memstorage::MemStorage::new(),
+    ));
+    #[cfg(feature = "storagebackend")]
+    let backend =
+        storage_backend::storage::Storage::new_with_path(&std::path::PathBuf::from("storage.db"))
+            .unwrap();
+    #[cfg(feature = "storagebackend")]
+    let storage = Arc::new(Mutex::new(
+        bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
+    ));
 
     let mut server = BrokerSync::new(&config, storage.clone());
 
@@ -110,5 +74,6 @@ fn main() {
     server.close();
     sleep(Duration::from_secs(1));
 
-    info!("Storage data: {:?}", storage.lock().unwrap().data);
+    #[cfg(not(feature = "storagebackend"))]
+    info!("Storage data: {:?}", storage.lock().unwrap());
 }
