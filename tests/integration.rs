@@ -5,12 +5,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(not(feature = "storagebackend"))]
+use bitvmx_broker::broker_memstorage::MemStorage;
 use bitvmx_broker::{
     channel::channel::DualChannel,
     rpc::{client::Client, sync_server::BrokerSync, BrokerConfig},
 };
-#[cfg(not(feature = "storagebackend"))]
-use storage_backend::broker_memstorage::MemStorage;
 #[cfg(feature = "storagebackend")]
 use storage_backend::storage::Storage;
 
