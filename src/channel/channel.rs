@@ -15,10 +15,10 @@ impl DualChannel {
         self.client.send_msg(self.my_id, dest, msg)
     }
 
-    pub fn recv(&self) -> Result<Option<String>, crate::rpc::errors::BrokerError> {
+    pub fn recv(&self) -> Result<Option<(String, u32)>, crate::rpc::errors::BrokerError> {
         if let Some(msg) = self.client.get_msg(self.my_id)? {
             self.client.ack(self.my_id, msg.uid)?;
-            Ok(Some(msg.msg))
+            Ok(Some((msg.msg, msg.from)))
         } else {
             Ok(None)
         }

@@ -41,7 +41,8 @@ fn test_channel() {
 
     user_1.send(2, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();
-    assert_eq!(msg, "Hello!");
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, 1);
     server.close();
     cleanup_storage();
 }
