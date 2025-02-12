@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use tokio::runtime::Runtime;
 
@@ -14,7 +14,10 @@ pub struct Client {
 impl Client {
     pub fn new(config: &BrokerConfig) -> Self {
         let rt = Runtime::new().unwrap();
-        let address = SocketAddr::new(config.ip.unwrap(), config.port);
+        let address = SocketAddr::new(
+            config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            config.port,
+        );
         Self { rt, address }
     }
 
