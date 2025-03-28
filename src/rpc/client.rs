@@ -1,4 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 
 use tokio::runtime::Runtime;
 
@@ -6,14 +7,15 @@ use super::{errors::BrokerError, BrokerConfig, Message};
 use crate::rpc::BrokerClient;
 use tarpc::{client, context, tokio_serde::formats::Json};
 
+#[derive(Clone)]
 pub struct Client {
-    rt: Runtime,
+    rt: Arc<Runtime>,
     address: SocketAddr,
 }
 
 impl Client {
     pub fn new(config: &BrokerConfig) -> Self {
-        let rt = Runtime::new().unwrap();
+        let rt = Arc::new(Runtime::new().unwrap());
         let address = SocketAddr::new(
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,

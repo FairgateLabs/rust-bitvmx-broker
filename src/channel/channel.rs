@@ -1,5 +1,6 @@
 use crate::rpc::{client::Client, BrokerConfig};
 
+#[derive(Clone)]
 pub struct DualChannel {
     client: Client,
     my_id: u32,
