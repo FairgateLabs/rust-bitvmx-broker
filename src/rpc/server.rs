@@ -6,7 +6,7 @@ use std::{
 };
 use tarpc::{
     context,
-    server::{self, incoming::Incoming, Channel},
+    server::{self, Channel},
     tokio_serde::formats::Json,
 };
 use tokio::sync::mpsc;

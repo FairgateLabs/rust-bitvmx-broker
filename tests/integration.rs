@@ -7,35 +7,51 @@ use std::{
 
 #[cfg(not(feature = "storagebackend"))]
 use bitvmx_broker::broker_memstorage::MemStorage;
+#[cfg(feature = "storagebackend")]
+use bitvmx_broker::broker_storage::BrokerStorage;
 use bitvmx_broker::{
-    channel::channel::DualChannel,
+    channel::channel::{DualChannel, LocalChannel},
     rpc::{client::Client, sync_server::BrokerSync, BrokerConfig},
 };
 #[cfg(feature = "storagebackend")]
 use storage_backend::storage::Storage;
+use tracing_subscriber::{
+    fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
+};
 
-fn prepare(port: u16) -> (BrokerSync, BrokerConfig) {
-    #[cfg(not(feature = "storagebackend"))]
+#[cfg(not(feature = "storagebackend"))]
+fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<MemStorage>) {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
-    #[cfg(feature = "storagebackend")]
-    let backend = Storage::new_with_path(&PathBuf::from("storage.db")).unwrap();
-    #[cfg(feature = "storagebackend")]
+    let config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+    let server = BrokerSync::new(&config, storage.clone());
+
+    let local = LocalChannel::new(1, storage.clone());
+
+    (server, config, local)
+}
+
+#[cfg(feature = "storagebackend")]
+fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<BrokerStorage>) {
+    let backend = Storage::new_with_path(&PathBuf::from(format!("storage_{}.db", port))).unwrap();
     let storage = Arc::new(Mutex::new(
         bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
     ));
     let config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
     let server = BrokerSync::new(&config, storage.clone());
-    (server, config)
+
+    let local = LocalChannel::new(1, storage.clone());
+
+    (server, config, local)
 }
 
-fn cleanup_storage() {
-    let _ = fs::remove_dir_all(&PathBuf::from("storage.db"));
+fn cleanup_storage(port: u16) {
+    let _ = fs::remove_dir_all(&PathBuf::from(format!("storage_{}.db", port)));
 }
 
 #[test]
 fn test_channel() {
-    cleanup_storage();
-    let (mut server, config) = prepare(10000);
+    cleanup_storage(10000);
+    let (mut server, config, _) = prepare(10000);
     let user_1 = DualChannel::new(&config, 1);
     let user_2 = DualChannel::new(&config, 2);
 
@@ -44,13 +60,13 @@ fn test_channel() {
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, 1);
     server.close();
-    cleanup_storage();
+    cleanup_storage(10000);
 }
 
 #[test]
 fn test_ack() {
-    cleanup_storage();
-    let (mut server, config) = prepare(10001);
+    cleanup_storage(10001);
+    let (mut server, config, _) = prepare(10001);
 
     let client = Client::new(&config);
     client.send_msg(1, 2, "Hello!".to_string()).unwrap();
@@ -63,5 +79,72 @@ fn test_ack() {
     println!("{:?}", client.get_msg(2).unwrap());
     assert!(client.get_msg(2).unwrap().is_none());
     server.close();
-    cleanup_storage();
+    cleanup_storage(10001);
+}
+
+pub fn init_tracing() -> anyhow::Result<()> {
+    let filter = EnvFilter::builder()
+        .parse("info,tarpc=off") // Include everything at "info" except `libp2p`
+        .expect("Invalid filter");
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_span_events(FmtSpan::NEW | FmtSpan::CLOSE))
+        .try_init()?;
+
+    Ok(())
+}
+
+#[test]
+fn test_stress_channel() {
+    init_tracing().unwrap();
+    cleanup_storage(10003);
+    let (mut server, config, _) = prepare(10003);
+    let user_1 = DualChannel::new(&config, 1);
+    let user_2 = DualChannel::new(&config, 2);
+
+    for i in 0..1000 {
+        println!("Sending: {}", i);
+        let send_ok = user_1.send(2, "Hello!".to_string());
+        if send_ok.is_err() {
+            println!("Error: {:?}", send_ok);
+        }
+        assert!(send_ok.is_ok());
+
+        let mut ok = false;
+
+        while !ok {
+            let try_recv = user_2.recv();
+            if try_recv.is_err() {
+                println!("Error: {:?}", try_recv);
+            }
+            assert!(try_recv.is_ok());
+            let recv_ok = try_recv.unwrap();
+            if recv_ok.is_none() {
+                continue;
+            }
+            assert!(recv_ok.is_some());
+
+            ok = true;
+            let msg = recv_ok.unwrap();
+            assert_eq!(msg.0, "Hello!");
+            assert_eq!(msg.1, 1);
+        }
+    }
+    server.close();
+    cleanup_storage(10003);
+}
+
+#[test]
+fn test_local_channel() {
+    cleanup_storage(10010);
+    let (mut server, config, user_1) = prepare(10010);
+    let user_2 = DualChannel::new(&config, 2);
+
+    user_1.send(2, "Hello!".to_string()).unwrap();
+    let msg = user_2.recv().unwrap().unwrap();
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, 1);
+    server.close();
+    cleanup_storage(10010);
 }
