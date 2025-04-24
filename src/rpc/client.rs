@@ -1,6 +1,9 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
-use tokio::{net::TcpStream, runtime::Runtime};
+use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
 
 use super::{errors::BrokerError, BrokerConfig, Message};
 use crate::rpc::BrokerClient;
@@ -8,7 +11,8 @@ use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
 
 pub struct Client {
     rt: Runtime,
-    client: BrokerClient,
+    address: SocketAddr,
+    client: Arc<Mutex<Option<BrokerClient>>>,
 }
 
 impl Client {
@@ -19,35 +23,51 @@ impl Client {
             config.port,
         );
 
-        // Connect and initialize the client once
-        let client_future = async {
-            let stream = TcpStream::connect(address).await?;
-            stream.set_nodelay(true)?;
-            let transport = serde_transport::Transport::from((stream, Json::default()));
-            let client = BrokerClient::new(client::Config::default(), transport).spawn();
-            Ok::<_, anyhow::Error>(client)
-        };
+        Self {
+            rt,
+            address,
+            client: Arc::new(Mutex::new(None)),
+        }
+    }
 
-        let client = rt
-            .block_on(client_future)
-            .expect("Failed to connect to broker");
+    async fn connect(&self) -> Result<(), BrokerError> {
+        let stream = TcpStream::connect(self.address).await?;
+        stream.set_nodelay(true)?;
+        let transport = serde_transport::Transport::from((stream, Json::default()));
+        let client = BrokerClient::new(client::Config::default(), transport).spawn();
+        let mut locked = self.client.lock().await;
+        *locked = Some(client);
+        Ok(())
+    }
 
-        Self { rt, client }
+    async fn get_or_connect(&self) -> Result<BrokerClient, BrokerError> {
+        let mut locked = self.client.lock().await;
+
+        if locked.is_none() {
+            drop(locked); // release lock before await
+            self.connect().await?;
+            locked = self.client.lock().await;
+        }
+
+        locked
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| BrokerError::Disconnected)
     }
 
     async fn async_send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
-        Ok(self
-            .client
-            .send(context::current(), from, dest, msg)
-            .await?)
+        let client = self.get_or_connect().await?;
+        Ok(client.send(context::current(), from, dest, msg).await?)
     }
 
     async fn async_get_msg(&self, dest: u32) -> Result<Option<Message>, BrokerError> {
-        Ok(self.client.get(context::current(), dest).await?)
+        let client = self.get_or_connect().await?;
+        Ok(client.get(context::current(), dest).await?)
     }
 
     async fn async_ack(&self, dest: u32, uid: u64) -> Result<bool, BrokerError> {
-        Ok(self.client.ack(context::current(), dest, uid).await?)
+        let client = self.get_or_connect().await?;
+        Ok(client.ack(context::current(), dest, uid).await?)
     }
 
     pub fn send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
