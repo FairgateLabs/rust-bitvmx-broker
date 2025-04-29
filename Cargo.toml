@@ -15,6 +15,10 @@ tracing = { version = "0.1" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0.11"
 rust-bitvmx-storage-backend = { path = "../rust-bitvmx-storage-backend", optional = true }
+tokio-rustls = "0.26.2"
+tokio-util = "0.7.14"
+rustls = "0.23.26"
+rustls-pemfile = "2.2.0"
 
 [dev-dependencies]
 ctrlc = "3.1.0"

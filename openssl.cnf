@@ -1,0 +1,17 @@
+# openssl.cnf
+[ req ]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+prompt = no
+
+[ req_distinguished_name ]
+CN = localhost                  # Common Name
+
+[ v3_req ]
+basicConstraints = critical,CA:FALSE    # Not a Certificate Authority, but a leaf certificate. This is a leaf certificate (end-entity) and should not be used to sign other certs (CA)
+keyUsage = critical, digitalSignature, keyEncipherment 
+extendedKeyUsage = serverAuth   # TLS server use
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = localhost               # This certificate is valid for the DNS name "localhost"

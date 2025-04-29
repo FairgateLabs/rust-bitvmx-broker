@@ -1,18 +1,28 @@
+use super::{BrokerConfig, Message, StorageApi};
+use crate::rpc::tls_helper::{load_certs, load_private_key};
 use crate::rpc::Broker;
 use futures::{future, prelude::*};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::ServerConfig;
+use rustls_pemfile;
+use std::any;
+use std::fs::File;
+use std::io::BufReader;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex},
 };
+use tarpc::serde_transport;
 use tarpc::{
     context,
     server::{self, Channel},
     tokio_serde::formats::Json,
 };
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio_rustls::TlsAcceptor;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::info;
-
-use super::{BrokerConfig, Message, StorageApi};
 
 #[derive(Clone)]
 struct BrokerServer<S: StorageApi> {
@@ -68,21 +78,45 @@ where
         config.port,
     );
 
-    let mut listener = tarpc::serde_transport::tcp::listen(&server_addr, Json::default).await?;
-    tracing::info!("Listening on port {}", listener.local_addr().port());
-    listener.config_mut().max_frame_length(usize::MAX);
+    let listener = TcpListener::bind(server_addr).await?;
+    info!(
+        "Listening with TLS on port {}",
+        listener.local_addr()?.port()
+    );
+
+    let certs = load_certs("cert.pem")?;
+    let key = load_private_key("key.pem")?;
+    let tls_config = ServerConfig::builder()
+        .with_no_client_auth() // Server does not require the client to present a certificate
+        .with_single_cert(certs, key)?;
+    let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
 
     tokio::select! {
-        _ = listener
-            .filter_map(|r| future::ready(r.ok()))
-            .map(server::BaseChannel::with_defaults)
-            //.max_channels_per_key(1, |t| t.transport().peer_addr().unwrap().ip())
-            .map(|channel| {
-                let server = BrokerServer::new(channel.transport().peer_addr().unwrap(), storage.clone());
-                channel.execute(server.serve()).for_each(spawn)
-            })
-            .buffer_unordered(10)
-            .for_each(|_| async {}) => {},
+        _ = async {
+            loop {  // Waiting for incoming connections
+                let (stream, addr) = listener.accept().await.unwrap();
+                let tls_acceptor = tls_acceptor.clone();
+                let storage = storage.clone();
+
+                tokio::spawn(async move {   // One stream per client
+                    let tls_stream = match tls_acceptor.accept(stream).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("TLS accept error: {:?}", e);
+                            return;
+                        }
+                    };
+
+                    let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
+                    let transport = serde_transport::new(framed, Json::default());
+
+                    server::BaseChannel::with_defaults(transport)
+                        .execute(BrokerServer::new(addr, storage).serve())
+                        .for_each(spawn)
+                        .await;
+                });
+            }
+        } => {},
         _ = shutdown.recv() => {
             info!("Shutting down...");
         },

@@ -6,6 +6,7 @@ pub mod client;
 pub mod errors;
 pub mod server;
 pub mod sync_server;
+pub mod tls_helper;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {

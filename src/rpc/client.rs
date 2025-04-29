@@ -7,7 +7,18 @@ use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
 
 use super::{errors::BrokerError, BrokerConfig, Message};
 use crate::rpc::BrokerClient;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls_pemfile;
+use std::fs::File;
+use std::io::BufReader;
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
+use tokio_rustls::{
+    rustls::{ClientConfig, RootCertStore},
+    TlsConnector,
+};
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+use crate::rpc::tls_helper::load_root_store;
 
 pub struct Client {
     rt: Runtime,
@@ -33,10 +44,29 @@ impl Client {
     async fn connect(&self) -> Result<(), BrokerError> {
         let stream = TcpStream::connect(self.address).await?;
         stream.set_nodelay(true)?;
-        let transport = serde_transport::Transport::from((stream, Json::default()));
+
+        let root_cert_store = load_root_store("cert.pem").unwrap();
+
+        // Client config
+        let config = ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth(); // Client is anonymous
+
+        let connector = TlsConnector::from(Arc::new(config));
+
+        // Domain must match certificate CN
+        let domain = ServerName::try_from("localhost").unwrap();
+
+        let tls_stream = connector.connect(domain, stream).await?;
+
+        let framed = Framed::new(tls_stream, LengthDelimitedCodec::new());
+        let transport = serde_transport::new(framed, Json::default());
+
         let client = BrokerClient::new(client::Config::default(), transport).spawn();
+
         let mut locked = self.client.lock().await;
         *locked = Some(client);
+
         Ok(())
     }
 

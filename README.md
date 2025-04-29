@@ -65,6 +65,13 @@ fn main() {
     server.close();
 }
 ```
+
+## Certificates
+To create the certificates, just run:
+```
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -config openssl.cnf
+```
+
 ## License
 
 This project is licensed under the MIT License.
