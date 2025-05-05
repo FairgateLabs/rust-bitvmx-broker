@@ -4,8 +4,13 @@ use std::{
 };
 
 use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
+use tracing::info;
 
-use super::{errors::BrokerError, BrokerConfig, Message};
+use super::{
+    errors::BrokerError,
+    tls_helper::{load_certs, load_private_key},
+    BrokerConfig, Message,
+};
 use crate::rpc::BrokerClient;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls_pemfile;
@@ -24,6 +29,7 @@ pub struct Client {
     rt: Runtime,
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
+    //cert_files: String, // Path and name of the .key and .pem files
 }
 
 impl Client {
@@ -38,6 +44,7 @@ impl Client {
             rt,
             address,
             client: Arc::new(Mutex::new(None)),
+            //cert_files,
         }
     }
 
@@ -45,16 +52,18 @@ impl Client {
         let stream = TcpStream::connect(self.address).await?;
         stream.set_nodelay(true)?;
 
-        let root_cert_store = load_root_store("cert.pem").unwrap();
+        let ca_store = load_root_store("certs/ca.pem").unwrap();
+        let cert = load_certs("certs/peer1.pem").unwrap(); //"certs/peer1.pem"
+        let key = load_private_key("certs/peer1.key").unwrap();
 
         // Client config
         let config = ClientConfig::builder()
-            .with_root_certificates(root_cert_store)
-            .with_no_client_auth(); // Client is anonymous
+            .with_root_certificates(ca_store)
+            .with_client_auth_cert(cert, key)
+            .unwrap();
+        //.with_no_client_auth();
 
         let connector = TlsConnector::from(Arc::new(config));
-
-        // Domain must match certificate CN
         let domain = ServerName::try_from("localhost").unwrap();
 
         let tls_stream = connector.connect(domain, stream).await?;

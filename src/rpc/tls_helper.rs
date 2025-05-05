@@ -2,8 +2,13 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::RootCertStore;
 
 use rustls_pemfile::{certs, private_key};
+use std::collections::HashMap;
+use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Result as IoResult};
+use std::path::PathBuf;
+
+type Whitelist = HashMap<String, String>;
 
 pub fn load_certs(filename: &str) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
     let file = File::open(filename)?;
@@ -29,4 +34,19 @@ pub fn load_root_store(cert_path: &str) -> Result<RootCertStore, anyhow::Error> 
         root_store.add(cert)?;
     }
     Ok(root_store)
+}
+
+pub fn load_whitelist_from_yaml(path: &str) -> Result<Whitelist, anyhow::Error> {
+    let content = fs::read_to_string(path)?;
+    let whitelist: Whitelist = serde_yaml::from_str(&content)?;
+    Ok(whitelist)
+}
+
+pub fn get_whitelist_path() -> Result<String, anyhow::Error> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let binding = base.join("certs/whitelist.yaml");
+    let path = binding
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid wihtelist path"))?;
+    Ok(path.to_string())
 }

@@ -1,0 +1,16 @@
+[req]
+distinguished_name = dn
+x509_extensions = v3_client
+prompt = no
+
+[dn]
+CN = peer1  #TODO: Remove as we want fingerprint to be used instead of CN
+
+[v3_client]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
