@@ -1,35 +1,30 @@
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
 
+use crate::rpc::tls_helper::{
+    get_whitelist_path, load_certs, load_private_key, load_whitelist_from_yaml, NoVerifier,
+};
+use ring::digest::{digest, SHA256};
+
+use crate::rpc::BrokerClient;
+use rustls::pki_types::ServerName;
+use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
 use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
+use tokio_rustls::{rustls::ClientConfig, TlsConnector};
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::info;
 
-use super::{
-    errors::BrokerError,
-    tls_helper::{load_certs, load_private_key},
-    BrokerConfig, Message,
-};
-use crate::rpc::BrokerClient;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
-use rustls_pemfile;
-use std::fs::File;
-use std::io::BufReader;
-use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
-use tokio_rustls::{
-    rustls::{ClientConfig, RootCertStore},
-    TlsConnector,
-};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-use crate::rpc::tls_helper::load_root_store;
+use super::{errors::BrokerError, BrokerConfig, Message};
 
 pub struct Client {
     rt: Runtime,
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
-    //cert_files: String, // Path and name of the .key and .pem files
+    allow_list: HashMap<String, String>, // fingerprint / peerID
+                                         //cert_files: String, // Path and name of the .key and .pem files
 }
 
 impl Client {
@@ -39,11 +34,12 @@ impl Client {
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,
         );
-
+        let allow_list = load_whitelist_from_yaml(&get_whitelist_path().unwrap()).unwrap();
         Self {
             rt,
             address,
             client: Arc::new(Mutex::new(None)),
+            allow_list,
             //cert_files,
         }
     }
@@ -52,22 +48,31 @@ impl Client {
         let stream = TcpStream::connect(self.address).await?;
         stream.set_nodelay(true)?;
 
-        let ca_store = load_root_store("certs/ca.pem").unwrap();
         let cert = load_certs("certs/peer1.pem").unwrap(); //"certs/peer1.pem"
         let key = load_private_key("certs/peer1.key").unwrap();
 
         // Client config
         let config = ClientConfig::builder()
-            .with_root_certificates(ca_store)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier))
             .with_client_auth_cert(cert, key)
             .unwrap();
-        //.with_no_client_auth();
 
         let connector = TlsConnector::from(Arc::new(config));
         let domain = ServerName::try_from("localhost").unwrap();
 
         let tls_stream = connector.connect(domain, stream).await?;
 
+        let server_cert_der = tls_stream.get_ref().1.peer_certificates().unwrap()[0].as_ref();
+        let fingerprint = digest(&SHA256, server_cert_der);
+        let fingerprint_hex = hex::encode(fingerprint.as_ref());
+
+        if !self.allow_list.contains_key(&fingerprint_hex) {
+            info!("Unauthorized server fingerprint: {}", fingerprint_hex);
+            return Err(BrokerError::UnauthorizedFingerprint(fingerprint_hex));
+        }
+        // else
+        info!("Server is authorized!");
         let framed = Framed::new(tls_stream, LengthDelimitedCodec::new());
         let transport = serde_transport::new(framed, Json::default());
 
@@ -75,7 +80,6 @@ impl Client {
 
         let mut locked = self.client.lock().await;
         *locked = Some(client);
-
         Ok(())
     }
 

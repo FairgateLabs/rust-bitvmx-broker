@@ -10,4 +10,7 @@ pub enum BrokerError {
 
     #[error("Broker client is disconnected")]
     Disconnected,
+
+    #[error("Unauthorized fingerprint: {0}")]
+    UnauthorizedFingerprint(String),
 }

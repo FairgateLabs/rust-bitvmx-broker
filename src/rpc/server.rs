@@ -1,19 +1,13 @@
 use super::{BrokerConfig, Message, StorageApi};
 use crate::rpc::tls_helper::{
     get_whitelist_path, load_certs, load_private_key, load_whitelist_from_yaml,
+    AcceptAllClientCerts,
 };
 use crate::rpc::Broker;
-use futures::{future, prelude::*};
+use futures::prelude::*;
 use hex;
 use ring::digest::{digest, SHA256};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::WebPkiClientVerifier;
-use rustls::{RootCertStore, ServerConfig};
-use rustls_pemfile;
-use std::any;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
+use rustls::ServerConfig;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex},
@@ -79,7 +73,7 @@ pub async fn run<S>(
 where
     S: 'static + Send + Sync + StorageApi + Clone,
 {
-    let whitelist = load_whitelist_from_yaml(&get_whitelist_path()?)?;
+    let whitelist = load_whitelist_from_yaml(&get_whitelist_path()?)?; //TODO: change to allow_list
 
     let server_addr = (
         config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
@@ -92,20 +86,12 @@ where
         listener.local_addr()?.port()
     );
 
-    let ca_certs = load_certs("certs/ca.pem")?;
     let certs = load_certs("certs/server.pem")?;
     let key = load_private_key("certs/server.key")?;
 
-    let mut client_root = RootCertStore::empty();
-    for cert in ca_certs {
-        client_root.add(cert)?;
-    }
-
-    let client_auth = WebPkiClientVerifier::builder(client_root.into()).build()?;
-
+    let client_auth = Arc::new(AcceptAllClientCerts);
     let config = ServerConfig::builder()
         .with_client_cert_verifier(client_auth)
-        // .with_no_client_auth()
         .with_single_cert(certs, key)?;
     let tls_acceptor = TlsAcceptor::from(Arc::new(config));
 
@@ -130,19 +116,6 @@ where
                         }
                     };
 
-                    // let client_cert = tls_stream.get_ref().1.peer_certificates().unwrap()[0].as_ref();
-
-                    // let parsed = x509_parser::parse_x509_certificate(client_cert).unwrap().1;
-                    // let cn = parsed.subject().iter_common_name().next().unwrap().as_str().unwrap();
-                    // info!("Client CN = {}", cn);
-
-                    // if whitelist.contains_key(cn) {
-                    //     info!("Client '{}' is authorized!", cn);
-                    //     // proceed with protocol handling
-                    // } else {
-                    //     info!("Client '{}' is NOT authorized!", cn);
-                    // }
-
                     let client_cert_der = tls_stream
                         .get_ref()
                         .1
@@ -150,25 +123,22 @@ where
                         .unwrap()[0]
                         .as_ref();
 
-                    // Compute SHA-256 hash of the certificate
                     let fingerprint = digest(&SHA256, client_cert_der);
                     let fingerprint_hex = hex::encode(fingerprint.as_ref());
 
-                    info!("Client fingerprint = {}", fingerprint_hex);
-
                     if whitelist.contains_key(&fingerprint_hex) {
                         info!("Client is authorized!");
+                        let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
+                        let transport = serde_transport::new(framed, Json::default());
+
+                        server::BaseChannel::with_defaults(transport)
+                            .execute(BrokerServer::new(addr, storage).serve())
+                            .for_each(spawn)
+                            .await;
                     } else {
                         info!("Unauthorized client fingerprint: {}", fingerprint_hex);
                     }
 
-                    let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
-                            let transport = serde_transport::new(framed, Json::default());
-
-                    server::BaseChannel::with_defaults(transport)
-                        .execute(BrokerServer::new(addr, storage).serve())
-                        .for_each(spawn)
-                        .await;
                 });
             }
         } => {},
@@ -179,3 +149,55 @@ where
 
     Ok(())
 }
+
+// #[derive(Clone, Debug)]
+// pub struct AcceptAnyClientCert;
+
+// impl ClientCertVerifier for AcceptAnyClientCert {
+//     fn offer_client_auth(&self) -> bool {
+//         true
+//     }
+
+//     fn root_hint_subjects(&self) -> &[DistinguishedName] {
+//         &[]
+//     }
+
+//     fn verify_client_cert(
+//         &self,
+//         _end_entity: &CertificateDer<'_>,
+//         _intermediates: &[CertificateDer<'_>],
+//         _now: UnixTime,
+//     ) -> Result<ClientCertVerified, Error> {
+//         Ok(ClientCertVerified::assertion())
+//     }
+
+//     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+//         vec![SignatureScheme::ECDSA_NISTP256_SHA256]
+//     }
+
+//     fn verify_tls12_signature(
+//         &self,
+//         _message: &[u8],
+//         _cert: &CertificateDer<'_>,
+//         _dss: &DigitallySignedStruct,
+//     ) -> Result<HandshakeSignatureValid, Error> {
+//         Ok(HandshakeSignatureValid::assertion())
+//     }
+
+//     fn verify_tls13_signature(
+//         &self,
+//         _message: &[u8],
+//         _cert: &CertificateDer<'_>,
+//         _dss: &DigitallySignedStruct,
+//     ) -> Result<HandshakeSignatureValid, Error> {
+//         Ok(HandshakeSignatureValid::assertion())
+//     }
+
+//     fn client_auth_mandatory(&self) -> bool {
+//         self.offer_client_auth()
+//     }
+
+//     fn requires_raw_public_keys(&self) -> bool {
+//         false
+//     }
+// }
