@@ -8,9 +8,9 @@ pub struct DualChannel {
 }
 
 impl DualChannel {
-    pub fn new(config: &BrokerConfig, my_id: u32) -> Self {
-        let client = Client::new(config);
-        Self { client, my_id }
+    pub fn new(config: &BrokerConfig, my_id: u32) -> Result<Self, crate::rpc::errors::BrokerError> {
+        let client = Client::new(config)?;
+        Ok(Self { client, my_id })
     }
 
     pub fn send(&self, dest: u32, msg: String) -> Result<bool, crate::rpc::errors::BrokerError> {

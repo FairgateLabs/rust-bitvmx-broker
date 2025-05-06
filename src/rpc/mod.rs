@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
+use tls_helper::CertFiles;
 
 pub mod client;
 pub mod errors;
@@ -26,11 +27,25 @@ pub(crate) trait Broker {
 pub struct BrokerConfig {
     pub port: u16,
     pub ip: Option<IpAddr>,
+    pub cert_files: CertFiles,
 }
 
 impl BrokerConfig {
-    pub fn new(port: u16, ip: Option<IpAddr>) -> Self {
-        Self { port, ip }
+    pub fn new(port: u16, ip: Option<IpAddr>, cert_files: CertFiles) -> Self {
+        Self {
+            port,
+            ip,
+            cert_files,
+        }
+    }
+
+    /// ⚠️ Test-only helper.
+    /// Loads certs from `certs/` folder using provided `name`.
+    pub fn get_local_cert_files(name: &str) -> CertFiles {
+        let cert = format!("certs/{}.pem", name);
+        let key = format!("certs/{}.key", name);
+        let allow_list = "certs/allowlist.yaml".to_string();
+        CertFiles::new(allow_list, cert, key)
     }
 }
 

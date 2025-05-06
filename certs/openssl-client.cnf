@@ -3,9 +3,6 @@ distinguished_name = dn
 x509_extensions = v3_client
 prompt = no
 
-[dn]
-CN = peer1  #TODO: Remove as we want fingerprint to be used instead of CN
-
 [v3_client]
 basicConstraints = CA:FALSE
 keyUsage = digitalSignature, keyEncipherment

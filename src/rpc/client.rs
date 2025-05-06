@@ -4,13 +4,11 @@ use std::{
     sync::Arc,
 };
 
-use crate::rpc::tls_helper::{
-    get_whitelist_path, load_certs, load_private_key, load_whitelist_from_yaml, NoVerifier,
-};
+use crate::rpc::tls_helper::{CertFiles, NoVerifier};
 use ring::digest::{digest, SHA256};
+use rustls::pki_types::ServerName;
 
 use crate::rpc::BrokerClient;
-use rustls::pki_types::ServerName;
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
 use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
 use tokio_rustls::{rustls::ClientConfig, TlsConnector};
@@ -23,61 +21,71 @@ pub struct Client {
     rt: Runtime,
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
-    allow_list: HashMap<String, String>, // fingerprint / peerID
-                                         //cert_files: String, // Path and name of the .key and .pem files
+    cert_files: CertFiles,
+    allow_list: HashMap<String, String>,
 }
 
 impl Client {
-    pub fn new(config: &BrokerConfig) -> Self {
-        let rt = Runtime::new().unwrap();
+    pub fn new(config: &BrokerConfig) -> Result<Self, BrokerError> {
+        let rt = Runtime::new()?;
         let address = SocketAddr::new(
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,
         );
-        let allow_list = load_whitelist_from_yaml(&get_whitelist_path().unwrap()).unwrap();
-        Self {
+        let cert_files = config.cert_files.clone();
+        let allow_list = cert_files.load_allowlist_from_yaml()?;
+        Ok(Self {
             rt,
             address,
             client: Arc::new(Mutex::new(None)),
+            cert_files,
             allow_list,
-            //cert_files,
-        }
+        })
     }
 
     async fn connect(&self) -> Result<(), BrokerError> {
         let stream = TcpStream::connect(self.address).await?;
         stream.set_nodelay(true)?;
 
-        let cert = load_certs("certs/peer1.pem").unwrap(); //"certs/peer1.pem"
-        let key = load_private_key("certs/peer1.key").unwrap();
+        // Load certs and private key
+        let cert = self.cert_files.load_certs()?;
+        let key = self.cert_files.load_private_key()?;
 
         // Client config
         let config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifier))
             .with_client_auth_cert(cert, key)
-            .unwrap();
+            .map_err(|e| BrokerError::TlsError(e.to_string()))?;
 
+        // Load certificate
         let connector = TlsConnector::from(Arc::new(config));
-        let domain = ServerName::try_from("localhost").unwrap();
-
+        let domain =
+            ServerName::try_from("localhost").map_err(|e| BrokerError::TlsError(e.to_string()))?;
         let tls_stream = connector.connect(domain, stream).await?;
 
-        let server_cert_der = tls_stream.get_ref().1.peer_certificates().unwrap()[0].as_ref();
+        // Verify server certificate against allow list
+        let server_cert_der =
+            tls_stream
+                .get_ref()
+                .1
+                .peer_certificates()
+                .ok_or(BrokerError::TlsError(
+                    "No server certificate found".to_string(),
+                ))?[0]
+                .as_ref();
         let fingerprint = digest(&SHA256, server_cert_der);
         let fingerprint_hex = hex::encode(fingerprint.as_ref());
-
         if !self.allow_list.contains_key(&fingerprint_hex) {
             info!("Unauthorized server fingerprint: {}", fingerprint_hex);
             return Err(BrokerError::UnauthorizedFingerprint(fingerprint_hex));
         }
-        // else
+
+        // Else the server is authorized
         info!("Server is authorized!");
         let framed = Framed::new(tls_stream, LengthDelimitedCodec::new());
         let transport = serde_transport::new(framed, Json::default());
-
         let client = BrokerClient::new(client::Config::default(), transport).spawn();
-
         let mut locked = self.client.lock().await;
         *locked = Some(client);
         Ok(())

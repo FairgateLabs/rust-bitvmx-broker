@@ -22,12 +22,17 @@ use tracing_subscriber::{
 #[cfg(not(feature = "storagebackend"))]
 fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<MemStorage>) {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
-    let config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-    let server = BrokerSync::new(&config, storage.clone());
+    let server_certs = BrokerConfig::get_local_cert_files("server");
+    let server_config =
+        BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), server_certs);
+    let server = BrokerSync::new(&server_config, storage.clone());
 
+    let client_certs = BrokerConfig::get_local_cert_files("peer1");
+    let client_config =
+        BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), client_certs);
     let local = LocalChannel::new(1, storage.clone());
 
-    (server, config, local)
+    (server, client_config, local)
 }
 
 #[cfg(feature = "storagebackend")]
@@ -36,8 +41,15 @@ fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<BrokerStorage>)
     let storage = Arc::new(Mutex::new(
         bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
     ));
-    let config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-    let server = BrokerSync::new(&config, storage.clone());
+
+    let server_certs = BrokerConfig::get_local_cert_files("server");
+    let server_config =
+        BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), server_certs);
+    let server = BrokerSync::new(&server_config, storage.clone());
+
+    let client_certs = BrokerConfig::get_local_cert_files("peer1");
+    let client_config =
+        BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), client_certs);
 
     let local = LocalChannel::new(1, storage.clone());
 
@@ -52,8 +64,8 @@ fn cleanup_storage(port: u16) {
 fn test_channel() {
     cleanup_storage(10000);
     let (mut server, config, _) = prepare(10000);
-    let user_1 = DualChannel::new(&config, 1);
-    let user_2 = DualChannel::new(&config, 2);
+    let user_1 = DualChannel::new(&config, 1).unwrap();
+    let user_2 = DualChannel::new(&config, 2).unwrap();
 
     user_1.send(2, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();
@@ -68,7 +80,7 @@ fn test_ack() {
     cleanup_storage(10001);
     let (mut server, config, _) = prepare(10001);
 
-    let client = Client::new(&config);
+    let client = Client::new(&config).unwrap();
     client.send_msg(1, 2, "Hello!".to_string()).unwrap();
 
     let msg = client.get_msg(2).unwrap().unwrap();
@@ -100,8 +112,8 @@ fn test_stress_channel() {
     init_tracing().unwrap();
     cleanup_storage(10003);
     let (mut server, config, _) = prepare(10003);
-    let user_1 = DualChannel::new(&config, 1);
-    let user_2 = DualChannel::new(&config, 2);
+    let user_1 = DualChannel::new(&config, 1).unwrap();
+    let user_2 = DualChannel::new(&config, 2).unwrap();
 
     for i in 0..1000 {
         println!("Sending: {}", i);
@@ -139,7 +151,7 @@ fn test_stress_channel() {
 fn test_local_channel() {
     cleanup_storage(10010);
     let (mut server, config, user_1) = prepare(10010);
-    let user_2 = DualChannel::new(&config, 2);
+    let user_2 = DualChannel::new(&config, 2).unwrap();
 
     user_1.send(2, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();

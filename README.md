@@ -67,9 +67,14 @@ fn main() {
 ```
 
 ## Certificates
-To create the certificates, just run:
+To generate the self-signed certificates and the `allowlist.yaml`, run the appropriate script depending on your OS:
+### 🪟 On Windows
+```sh
+cmd /c "cd certs && generate-certs.bat"
 ```
-openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -config openssl.cnf
+### 🐧 On Linux
+```sh
+(cd certs && ./generate-certs.sh)
 ```
 
 ## License

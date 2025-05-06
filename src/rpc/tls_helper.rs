@@ -9,47 +9,69 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-type Whitelist = HashMap<String, String>;
+type Allowlist = HashMap<String, String>;
 
-pub fn load_certs(filename: &str) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
-    let file = File::open(filename)?;
-    let mut reader = BufReader::new(file);
-    let certs = rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
-    Ok(certs)
+#[derive(Debug, Clone)]
+pub struct CertFiles {
+    // (allow_list.yaml, my_cert.pem, my_key.key)
+    allow_list: String,
+    cert: String,
+    key: String,
 }
 
-pub fn load_private_key(filename: &str) -> Result<PrivateKeyDer<'static>, anyhow::Error> {
-    let file = File::open(filename)?;
-    let mut reader = BufReader::new(file);
-    let keys = rustls_pemfile::private_key(&mut reader)?
-        .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
-    Ok(keys)
-}
-
-pub fn load_root_store(cert_path: &str) -> Result<RootCertStore, anyhow::Error> {
-    let mut root_store = RootCertStore::empty();
-    let cert_file = File::open(cert_path)?;
-    let mut reader = BufReader::new(cert_file);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect::<Result<_, _>>()?;
-    for cert in certs {
-        root_store.add(cert)?;
+impl CertFiles {
+    pub fn new(allow_list: String, cert: String, key: String) -> Self {
+        Self {
+            allow_list,
+            cert,
+            key,
+        }
     }
-    Ok(root_store)
-}
 
-pub fn load_whitelist_from_yaml(path: &str) -> Result<Whitelist, anyhow::Error> {
-    let content = fs::read_to_string(path)?;
-    let whitelist: Whitelist = serde_yaml::from_str(&content)?;
-    Ok(whitelist)
-}
+    pub fn get_allow_list(&self) -> &str {
+        &self.allow_list
+    }
 
-pub fn get_whitelist_path() -> Result<String, anyhow::Error> {
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let binding = base.join("certs/whitelist.yaml");
-    let path = binding
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid wihtelist path"))?;
-    Ok(path.to_string())
+    pub fn load_certs(&self) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
+        let file = File::open(self.cert.clone())?;
+        let mut reader = BufReader::new(file);
+        let certs = rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
+        Ok(certs)
+    }
+
+    pub fn load_private_key(&self) -> Result<PrivateKeyDer<'static>, anyhow::Error> {
+        let file = File::open(self.key.clone())?;
+        let mut reader = BufReader::new(file);
+        let keys = rustls_pemfile::private_key(&mut reader)?
+            .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
+        Ok(keys)
+    }
+
+    pub fn _load_root_store(cert_path: &str) -> Result<RootCertStore, anyhow::Error> {
+        let mut root_store = RootCertStore::empty();
+        let cert_file = File::open(cert_path)?;
+        let mut reader = BufReader::new(cert_file);
+        let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect::<Result<_, _>>()?;
+        for cert in certs {
+            root_store.add(cert)?;
+        }
+        Ok(root_store)
+    }
+
+    pub fn load_allowlist_from_yaml(&self) -> Result<Allowlist, anyhow::Error> {
+        let content = fs::read_to_string(self.allow_list.clone())?;
+        let allowlist: Allowlist = serde_yaml::from_str(&content)?;
+        Ok(allowlist)
+    }
+
+    fn _get_allowlist_path() -> Result<String, anyhow::Error> {
+        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let binding = base.join("certs/allowlist.yaml");
+        let path = binding
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid wihtelist path"))?;
+        Ok(path.to_string())
+    }
 }
 
 // CLIENT_CERT_VERIFIER

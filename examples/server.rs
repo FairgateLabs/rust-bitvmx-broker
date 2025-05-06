@@ -50,9 +50,11 @@ fn wait_ctrl() {
 fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
+    let certs = BrokerConfig::get_local_cert_files("server");
     let config = BrokerConfig {
         port: flags.port,
         ip: None,
+        cert_files: certs,
     };
 
     #[cfg(not(feature = "storagebackend"))]
