@@ -3,6 +3,8 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::{Arc, Mutex},
+    thread,
+    time::Duration,
 };
 
 #[cfg(not(feature = "storagebackend"))]
@@ -15,6 +17,8 @@ use bitvmx_broker::{
 };
 #[cfg(feature = "storagebackend")]
 use storage_backend::storage::Storage;
+use tokio::time::sleep;
+use tracing::info;
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
@@ -80,6 +84,28 @@ fn test_ack() {
     assert!(client.get_msg(2).unwrap().is_none());
     server.close();
     cleanup_storage(10001);
+}
+
+#[test]
+fn test_reconnect() {
+    cleanup_storage(10002);
+    let (mut server, config, _) = prepare(10002);
+    let client = Client::new(&config);
+
+    client.send_msg(1, 2, "Hello!".to_string()).unwrap();
+    let msg = client.get_msg(2).unwrap().unwrap();
+    assert_eq!(msg.msg, "Hello!");
+    server.close();
+
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    let (mut server, _config, _) = prepare(10002);
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    client.send_msg(1, 2, "World!".to_string()).unwrap();
+    let msg = client.get_msg(2).unwrap().unwrap();
+    assert_eq!(msg.msg, "World!");
+    server.close();
 }
 
 pub fn init_tracing() -> anyhow::Result<()> {

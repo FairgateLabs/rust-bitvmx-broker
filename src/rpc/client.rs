@@ -1,9 +1,10 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 
-use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
+use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex, time::sleep};
 
 use super::{errors::BrokerError, BrokerConfig, Message};
 use crate::rpc::BrokerClient;
@@ -41,18 +42,33 @@ impl Client {
     }
 
     async fn get_or_connect(&self) -> Result<BrokerClient, BrokerError> {
-        let mut locked = self.client.lock().await;
+        for _ in 0..5 {
+            {
+                let mut locked = self.client.lock().await;
 
-        if locked.is_none() {
-            drop(locked); // release lock before await
-            self.connect().await?;
-            locked = self.client.lock().await;
+                if let Some(client) = locked.as_ref().cloned() {
+                    // Check if the client is still connected
+                    let test = client.get(context::current(), u32::MAX).await;
+                    if test.is_ok() {
+                        return Ok(client);
+                    }
+
+                    // Client is broken
+                    *locked = None;
+                }
+            }
+
+            // Try reconnecting
+            if self.connect().await.is_ok() {
+                let locked = self.client.lock().await;
+                if let Some(client) = locked.as_ref().cloned() {
+                    return Ok(client);
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
-
-        locked
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| BrokerError::Disconnected)
+        Err(BrokerError::Disconnected)
     }
 
     async fn async_send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
