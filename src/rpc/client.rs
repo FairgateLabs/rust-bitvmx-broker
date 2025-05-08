@@ -41,31 +41,27 @@ impl Client {
     }
 
     async fn get_or_connect(&self) -> Result<BrokerClient, BrokerError> {
-        for _ in 0..5 {
-            {
-                let mut locked = self.client.lock().await;
+        {
+            let mut locked = self.client.lock().await;
 
-                if let Some(client) = locked.as_ref().cloned() {
-                    // Check if the client is still connected
-                    let test = client.get(context::current(), u32::MAX).await;
-                    if test.is_ok() {
-                        return Ok(client);
-                    }
-
-                    // Client is broken
-                    *locked = None;
-                }
-            }
-
-            // Try reconnecting
-            if self.connect().await.is_ok() {
-                let locked = self.client.lock().await;
-                if let Some(client) = locked.as_ref().cloned() {
+            if let Some(client) = locked.as_ref().cloned() {
+                // Check if the client is still connected
+                let test = client.get(context::current(), u32::MAX).await;
+                if test.is_ok() {
                     return Ok(client);
                 }
-            }
 
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                // Client is broken
+                *locked = None;
+            }
+        }
+
+        // Try reconnecting
+        if self.connect().await.is_ok() {
+            let locked = self.client.lock().await;
+            if let Some(client) = locked.as_ref().cloned() {
+                return Ok(client);
+            }
         }
         Err(BrokerError::Disconnected)
     }
