@@ -3,8 +3,6 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::{Arc, Mutex},
-    thread,
-    time::Duration,
 };
 
 #[cfg(not(feature = "storagebackend"))]
@@ -17,8 +15,6 @@ use bitvmx_broker::{
 };
 #[cfg(feature = "storagebackend")]
 use storage_backend::storage::Storage;
-use tokio::time::sleep;
-use tracing::info;
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
@@ -95,6 +91,7 @@ fn test_reconnect() {
     client.send_msg(1, 2, "Hello!".to_string()).unwrap();
     let msg = client.get_msg(2).unwrap().unwrap();
     assert_eq!(msg.msg, "Hello!");
+    assert!(client.ack(2, msg.uid).unwrap());
     server.close();
 
     std::thread::sleep(std::time::Duration::from_secs(2));

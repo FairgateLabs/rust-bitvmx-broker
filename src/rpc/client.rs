@@ -1,10 +1,9 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
-    time::Duration,
 };
 
-use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex, time::sleep};
+use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
 
 use super::{errors::BrokerError, BrokerConfig, Message};
 use crate::rpc::BrokerClient;
