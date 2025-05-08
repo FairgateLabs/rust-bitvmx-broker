@@ -7,4 +7,7 @@ pub enum BrokerError {
 
     #[error("IO error")]
     IoError(#[from] std::io::Error),
+
+    #[error("Broker client is disconnected")]
+    Disconnected,
 }
