@@ -14,6 +14,16 @@ pub struct Client {
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
 }
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        let rt = Runtime::new().unwrap();
+        Self {
+            rt: rt,
+            address: self.address,
+            client: Arc::clone(&self.client),
+        }
+    }
+}
 
 impl Client {
     pub fn new(config: &BrokerConfig) -> Self {
