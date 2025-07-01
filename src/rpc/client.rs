@@ -7,6 +7,7 @@ use std::{
 use crate::rpc::tls_helper::{CertFiles, NoVerifier};
 use ring::digest::{digest, SHA256};
 use rustls::pki_types::ServerName;
+use x509_parser::parse_x509_certificate;
 
 use crate::rpc::BrokerClient;
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
@@ -74,8 +75,20 @@ impl Client {
                     "No server certificate found".to_string(),
                 ))?[0]
                 .as_ref();
-        let fingerprint = digest(&SHA256, server_cert_der);
+        let (_, parsed_cert) = parse_x509_certificate(server_cert_der)
+            .map_err(|e| BrokerError::TlsError(format!("Failed to parse certificate: {:?}", e)))?;
+
+        // Extract subject public key info (SPKI)
+        let spki = parsed_cert
+            .tbs_certificate
+            .subject_pki
+            .subject_public_key
+            .data;
+
+        // Hash the public key
+        let fingerprint = digest(&SHA256, &spki);
         let fingerprint_hex = hex::encode(fingerprint.as_ref());
+
         if !self.allow_list.contains_key(&fingerprint_hex) {
             info!("Unauthorized server fingerprint: {}", fingerprint_hex);
             return Err(BrokerError::UnauthorizedFingerprint(fingerprint_hex));

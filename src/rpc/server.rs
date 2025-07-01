@@ -1,3 +1,4 @@
+use super::errors::BrokerError;
 use super::{BrokerConfig, Message, StorageApi};
 use crate::rpc::tls_helper::AcceptAllClientCerts;
 use crate::rpc::Broker;
@@ -20,6 +21,7 @@ use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{error, info};
+use x509_parser::parse_x509_certificate;
 
 #[derive(Clone)]
 struct BrokerServer<S: StorageApi> {
@@ -135,9 +137,18 @@ where
                             return;
                         }
                     };
+                    let (_, parsed_cert) = parse_x509_certificate(client_cert_der)
+                    .map_err(|e| BrokerError::TlsError(format!("Failed to parse certificate: {:?}", e))).unwrap();
+
+                    // Extract subject public key info (SPKI)
+                    let spki = parsed_cert
+                        .tbs_certificate
+                        .subject_pki
+                        .subject_public_key
+                        .data;
 
                     // Verify client certificate against allow list
-                    let fingerprint = digest(&SHA256, client_cert_der);
+                    let fingerprint = digest(&SHA256, &spki);
                     let fingerprint_hex = hex::encode(fingerprint.as_ref());
                     if allowlist.contains_key(&fingerprint_hex) {
                         info!("Client is authorized!");

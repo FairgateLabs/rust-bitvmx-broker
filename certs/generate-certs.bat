@@ -16,19 +16,27 @@ REM Create allowlist.yaml
 echo Creating allowlist.yaml...
 echo. > allowlist.yaml
 
-REM Add server fingerprint
-echo Hashing server cert...
-openssl x509 -in server.pem -outform der | openssl dgst -sha256 -r | for /f "tokens=1" %%H in ('more') do (
+REM Extract and hash only the public key bitstring
+echo Hashing server public key...
+openssl x509 -in server.pem -pubkey -noout ^
+    | openssl rsa -pubin -outform DER 2>nul ^
+    | openssl asn1parse -inform DER -strparse 19 -out pubkey.raw
+openssl dgst -sha256 -r pubkey.raw | for /f "tokens=1" %%H in ('more') do (
     echo %%H: server >> allowlist.yaml
 )
 
-REM Add each client fingerprint
+
+REM Do the same for each client
 for %%C in (%clients%) do (
-    echo Hashing %%C cert...
-    openssl x509 -in %%C.pem -outform der | openssl dgst -sha256 -r | for /f "tokens=1" %%H in ('more') do (
+    echo Hashing %%C public key...
+    openssl x509 -in %%C.pem -pubkey -noout ^
+        | openssl rsa -pubin -outform DER 2>nul ^
+        | openssl asn1parse -inform DER -strparse 19 -out %%C.raw
+    openssl dgst -sha256 -r %%C.raw | for /f "tokens=1" %%H in ('more') do (
         echo %%H: %%C >> allowlist.yaml
     )
 )
 
-echo Done. All certs, keys, and allowlist.yaml are in the  folder.
+
+echo Done. All certs, keys, and allowlist.yaml are in the folder.
 pause
