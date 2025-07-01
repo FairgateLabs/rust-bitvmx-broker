@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::rpc::{client::Client, BrokerConfig, Message, StorageApi};
 
+#[derive(Clone)]
 pub struct DualChannel {
     client: Client,
     my_id: u32,

@@ -22,6 +22,16 @@ pub struct Client {
     cert_files: CertFiles,
     allow_list: HashMap<String, String>,
 }
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        let rt = Runtime::new().unwrap();
+        Self {
+            rt: rt,
+            address: self.address,
+            client: Arc::clone(&self.client),
+        }
+    }
+}
 
 impl Client {
     pub fn new(config: &BrokerConfig) -> Result<Self, BrokerError> {
@@ -72,18 +82,29 @@ impl Client {
     }
 
     async fn get_or_connect(&self) -> Result<BrokerClient, BrokerError> {
-        let mut locked = self.client.lock().await;
+        {
+            let mut locked = self.client.lock().await;
 
-        if locked.is_none() {
-            drop(locked); // release lock before await
-            self.connect().await?;
-            locked = self.client.lock().await;
+            if let Some(client) = locked.as_ref().cloned() {
+                // Check if the client is still connected
+                let test = client.get(context::current(), u32::MAX).await;
+                if test.is_ok() {
+                    return Ok(client);
+                }
+
+                // Client is broken
+                *locked = None;
+            }
         }
 
-        locked
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| BrokerError::Disconnected)
+        // Try reconnecting
+        if self.connect().await.is_ok() {
+            let locked = self.client.lock().await;
+            if let Some(client) = locked.as_ref().cloned() {
+                return Ok(client);
+            }
+        }
+        Err(BrokerError::Disconnected)
     }
 
     async fn async_send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
