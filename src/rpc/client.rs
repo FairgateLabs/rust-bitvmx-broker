@@ -29,6 +29,8 @@ impl Clone for Client {
             rt: rt,
             address: self.address,
             client: Arc::clone(&self.client),
+            cert_files: self.cert_files.clone(),
+            allow_list: self.allow_list.clone(),
         }
     }
 }

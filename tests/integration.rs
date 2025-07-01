@@ -98,7 +98,7 @@ fn test_ack() {
 fn test_reconnect() {
     cleanup_storage(10002);
     let (mut server, config, _) = prepare(10002);
-    let client = Client::new(&config);
+    let client = Client::new(&config).unwrap();
 
     client.send_msg(1, 2, "Hello!".to_string()).unwrap();
     let msg = client.get_msg(2).unwrap().unwrap();
