@@ -4,17 +4,14 @@ use std::{
     sync::Arc,
 };
 
-use crate::rpc::tls_helper::{CertFiles, NoVerifier};
-use ring::digest::{digest, SHA256};
+use crate::rpc::tls_helper::{AllowList, CertFiles};
 use rustls::pki_types::ServerName;
-use x509_parser::parse_x509_certificate;
 
 use crate::rpc::BrokerClient;
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
 use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
 use tokio_rustls::{rustls::ClientConfig, TlsConnector};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use tracing::info;
 
 use super::{errors::BrokerError, BrokerConfig, Message};
 
@@ -55,7 +52,7 @@ impl Client {
         // Client config
         let config = ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier))
+            .with_custom_certificate_verifier(Arc::new(AllowList::new(self.allow_list.clone())))
             .with_client_auth_cert(cert, key)
             .map_err(|e| BrokerError::TlsError(e.to_string()))?;
 
@@ -65,37 +62,7 @@ impl Client {
             ServerName::try_from("localhost").map_err(|e| BrokerError::TlsError(e.to_string()))?;
         let tls_stream = connector.connect(domain, stream).await?;
 
-        // Verify server certificate against allow list
-        let server_cert_der =
-            tls_stream
-                .get_ref()
-                .1
-                .peer_certificates()
-                .ok_or(BrokerError::TlsError(
-                    "No server certificate found".to_string(),
-                ))?[0]
-                .as_ref();
-        let (_, parsed_cert) = parse_x509_certificate(server_cert_der)
-            .map_err(|e| BrokerError::TlsError(format!("Failed to parse certificate: {:?}", e)))?;
-
-        // Extract subject public key info (SPKI)
-        let spki = parsed_cert
-            .tbs_certificate
-            .subject_pki
-            .subject_public_key
-            .data;
-
-        // Hash the public key
-        let fingerprint = digest(&SHA256, &spki);
-        let fingerprint_hex = hex::encode(fingerprint.as_ref());
-
-        if !self.allow_list.contains_key(&fingerprint_hex) {
-            info!("Unauthorized server fingerprint: {}", fingerprint_hex);
-            return Err(BrokerError::UnauthorizedFingerprint(fingerprint_hex));
-        }
-
-        // Else the server is authorized
-        info!("Server is authorized!");
+        // Server is authorized
         let framed = Framed::new(tls_stream, LengthDelimitedCodec::new());
         let transport = serde_transport::new(framed, Json::default());
         let client = BrokerClient::new(client::Config::default(), transport).spawn();

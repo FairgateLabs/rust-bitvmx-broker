@@ -1,10 +1,7 @@
-use super::errors::BrokerError;
 use super::{BrokerConfig, Message, StorageApi};
-use crate::rpc::tls_helper::AcceptAllClientCerts;
+use crate::rpc::tls_helper::AllowList;
 use crate::rpc::Broker;
 use futures::prelude::*;
-use hex;
-use ring::digest::{digest, SHA256};
 use rustls::ServerConfig;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -21,7 +18,6 @@ use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{error, info};
-use x509_parser::parse_x509_certificate;
 
 #[derive(Clone)]
 struct BrokerServer<S: StorageApi> {
@@ -88,7 +84,7 @@ where
     let key = config.cert_files.load_private_key()?;
 
     // Server config
-    let client_auth = Arc::new(AcceptAllClientCerts);
+    let client_auth = Arc::new(AllowList::new(allowlist.clone()));
     let config = ServerConfig::builder()
         .with_client_cert_verifier(client_auth)
         .with_single_cert(certs, key)?;
@@ -108,7 +104,6 @@ where
 
                 // Clone for async task
                 let acceptor = tls_acceptor.clone();
-                let allowlist = allowlist.clone();
                 let storage = storage.clone();
 
                 // Spawn a new task for each connection
@@ -125,42 +120,14 @@ where
                         }
                     };
 
-                    // Get client certificate
-                    let client_cert_der = tls_stream
-                        .get_ref()
-                        .1
-                        .peer_certificates();
-                    let client_cert_der = match client_cert_der {
-                        Some(certs) => certs[0].as_ref(),
-                        None => {
-                            error!("No client certificate found");
-                            return;
-                        }
-                    };
-                    let (_, parsed_cert) = parse_x509_certificate(client_cert_der)
-                    .map_err(|e| BrokerError::TlsError(format!("Failed to parse certificate: {:?}", e))).unwrap();
 
-                    // Extract subject public key info (SPKI)
-                    let spki = parsed_cert
-                        .tbs_certificate
-                        .subject_pki
-                        .subject_public_key
-                        .data;
-
-                    // Verify client certificate against allow list
-                    let fingerprint = digest(&SHA256, &spki);
-                    let fingerprint_hex = hex::encode(fingerprint.as_ref());
-                    if allowlist.contains_key(&fingerprint_hex) {
-                        info!("Client is authorized!");
-                        let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
-                        let transport = serde_transport::new(framed, Json::default());
-                        server::BaseChannel::with_defaults(transport)
-                            .execute(BrokerServer::new(addr, storage).serve())
-                            .for_each(spawn)
-                            .await;
-                    } else {
-                        info!("Unauthorized client fingerprint: {}", fingerprint_hex);
-                    }
+                // Client is authorized
+                let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
+                let transport = serde_transport::new(framed, Json::default());
+                server::BaseChannel::with_defaults(transport)
+                    .execute(BrokerServer::new(addr, storage).serve())
+                    .for_each(spawn)
+                    .await;
                 });
             }
         } => {},

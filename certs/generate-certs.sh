@@ -1,3 +1,4 @@
+# TODO: Update to hash public key instead of the entire certificate
 #!/bin/bash
 set -e
 

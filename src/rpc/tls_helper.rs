@@ -1,7 +1,12 @@
+use ring::digest::{digest, SHA256};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use rustls::{DigitallySignedStruct, DistinguishedName, Error, RootCertStore, SignatureScheme};
+use rustls::{CertificateError, Error as RustlsError};
+use rustls::{DistinguishedName, RootCertStore, SignatureScheme};
+use std::{io, sync::Arc};
+use tracing::info;
+use x509_parser::parse_x509_certificate;
 
 use std::collections::HashMap;
 use std::fs;
@@ -74,19 +79,54 @@ impl CertFiles {
     }
 }
 
-// CLIENT_CERT_VERIFIER
 #[derive(Debug)]
-pub struct NoVerifier;
-impl ServerCertVerifier for NoVerifier {
+pub struct AllowList {
+    allow_list: HashMap<String, String>,
+}
+
+impl AllowList {
+    pub fn new(allow_list: HashMap<String, String>) -> Self {
+        Self { allow_list }
+    }
+}
+
+impl ServerCertVerifier for AllowList {
     fn verify_server_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
+        cert: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
         _server_name: &ServerName,
         _ocsp: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
+        // Parse cert
+        let (_, parsed_cert) = parse_x509_certificate(cert.as_ref())
+            .map_err(|e| rustls::Error::General(format!("Cert parse error: {:?}", e)))?;
+
+        // Extract SPKI
+        let spki = parsed_cert
+            .tbs_certificate
+            .subject_pki
+            .subject_public_key
+            .data;
+
+        // Hash SPKI
+        let fingerprint = digest(&SHA256, &spki);
+        let fingerprint_hex = hex::encode(fingerprint.as_ref());
+
+        if self.allow_list.contains_key(&fingerprint_hex) {
+            info!("✅ Server authorized (fingerprint: {})", fingerprint_hex);
+            Ok(ServerCertVerified::assertion())
+        } else {
+            info!("❌ Unauthorized server (fingerprint: {})", fingerprint_hex);
+            let err = io::Error::new(
+                io::ErrorKind::Other,
+                format!("Unauthorized fingerprint: {}", fingerprint_hex),
+            );
+            Err(RustlsError::InvalidCertificate(CertificateError::Other(
+                rustls::OtherError(Arc::new(err)),
+            )))
+        }
     }
 
     fn verify_tls12_signature(
@@ -94,7 +134,7 @@ impl ServerCertVerifier for NoVerifier {
         _message: &[u8],
         _cert: &CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
 
@@ -103,11 +143,11 @@ impl ServerCertVerifier for NoVerifier {
         _message: &[u8],
         _cert: &CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
 
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         vec![
             SignatureScheme::RSA_PSS_SHA256,
             SignatureScheme::ECDSA_NISTP256_SHA256,
@@ -116,19 +156,7 @@ impl ServerCertVerifier for NoVerifier {
     }
 }
 
-// SERVER_CERT_VERIFIER (accept all client certs)
-#[derive(Debug)]
-pub struct AcceptAllClientCerts;
-impl ClientCertVerifier for AcceptAllClientCerts {
-    fn verify_client_cert(
-        &self,
-        _certs: &CertificateDer<'_>,
-        _server_name: &[CertificateDer<'_>],
-        _now: UnixTime,
-    ) -> Result<ClientCertVerified, rustls::Error> {
-        Ok(ClientCertVerified::assertion())
-    }
-
+impl ClientCertVerifier for AllowList {
     fn offer_client_auth(&self) -> bool {
         true
     }
@@ -141,12 +169,49 @@ impl ClientCertVerifier for AcceptAllClientCerts {
         &[]
     }
 
+    fn verify_client_cert(
+        &self,
+        cert: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        // Parse cert
+        let (_, parsed_cert) = parse_x509_certificate(cert.as_ref())
+            .map_err(|e| rustls::Error::General(format!("Cert parse error: {:?}", e)))?;
+
+        // Extract SPKI
+        let spki = parsed_cert
+            .tbs_certificate
+            .subject_pki
+            .subject_public_key
+            .data;
+
+        // Compute SHA256 fingerprint
+        let fingerprint = digest(&SHA256, &spki);
+        let fingerprint_hex = hex::encode(fingerprint);
+
+        // Hash SPKI
+        if self.allow_list.contains_key(&fingerprint_hex) {
+            info!("✅ Client authorized (fingerprint: {})", fingerprint_hex);
+            Ok(ClientCertVerified::assertion())
+        } else {
+            info!("❌ Unauthorized client (fingerprint: {})", fingerprint_hex);
+            let err = io::Error::new(
+                io::ErrorKind::Other,
+                format!("Unauthorized fingerprint: {}", fingerprint_hex),
+            );
+            Err(RustlsError::InvalidCertificate(CertificateError::Other(
+                rustls::OtherError(Arc::new(err)),
+            )))
+        }
+    }
+
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
         _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, Error> {
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
 
@@ -154,8 +219,8 @@ impl ClientCertVerifier for AcceptAllClientCerts {
         &self,
         _message: &[u8],
         _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, Error> {
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
         Ok(HandshakeSignatureValid::assertion())
     }
 
