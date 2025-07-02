@@ -4,37 +4,27 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{CertificateError, Error as RustlsError};
 use rustls::{DistinguishedName, RootCertStore, SignatureScheme};
+use std::sync::Mutex;
 use std::{io, sync::Arc};
 use tracing::info;
 use x509_parser::parse_x509_certificate;
 
-use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-type Allowlist = HashMap<String, String>;
+use crate::allow_list::AllowList;
 
 #[derive(Debug, Clone)]
 pub struct CertFiles {
-    // (allow_list.yaml, my_cert.pem, my_key.key)
-    allow_list: String,
+    // (my_cert.pem, my_key.key)
     cert: String,
     key: String,
 }
 
 impl CertFiles {
-    pub fn new(allow_list: String, cert: String, key: String) -> Self {
-        Self {
-            allow_list,
-            cert,
-            key,
-        }
-    }
-
-    pub fn get_allow_list(&self) -> &str {
-        &self.allow_list
+    pub fn new(cert: String, key: String) -> Self {
+        Self { cert, key }
     }
 
     pub fn load_certs(&self) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
@@ -63,12 +53,6 @@ impl CertFiles {
         Ok(root_store)
     }
 
-    pub fn load_allowlist_from_yaml(&self) -> Result<Allowlist, anyhow::Error> {
-        let content = fs::read_to_string(self.allow_list.clone())?;
-        let allowlist: Allowlist = serde_yaml::from_str(&content)?;
-        Ok(allowlist)
-    }
-
     fn _get_allowlist_path() -> Result<String, anyhow::Error> {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let binding = base.join("certs/allowlist.yaml");
@@ -80,17 +64,17 @@ impl CertFiles {
 }
 
 #[derive(Debug)]
-pub struct AllowList {
-    allow_list: HashMap<String, String>,
+pub struct ArcAllowList {
+    allow_list: Arc<Mutex<AllowList>>,
 }
 
-impl AllowList {
-    pub fn new(allow_list: HashMap<String, String>) -> Self {
+impl ArcAllowList {
+    pub fn new(allow_list: Arc<Mutex<AllowList>>) -> Self {
         Self { allow_list }
     }
 }
 
-impl ServerCertVerifier for AllowList {
+impl ServerCertVerifier for ArcAllowList {
     fn verify_server_cert(
         &self,
         cert: &CertificateDer<'_>,
@@ -114,7 +98,14 @@ impl ServerCertVerifier for AllowList {
         let fingerprint = digest(&SHA256, &spki);
         let fingerprint_hex = hex::encode(fingerprint.as_ref());
 
-        if self.allow_list.contains_key(&fingerprint_hex) {
+        let is_allowed = {
+            let guard = self.allow_list.lock().map_err(|e| {
+                rustls::Error::General(format!("Failed to lock allow list: {:?}", e))
+            })?;
+            guard.is_allowed(&fingerprint_hex)
+        };
+
+        if is_allowed {
             info!("✅ Server authorized (fingerprint: {})", fingerprint_hex);
             Ok(ServerCertVerified::assertion())
         } else {
@@ -156,7 +147,7 @@ impl ServerCertVerifier for AllowList {
     }
 }
 
-impl ClientCertVerifier for AllowList {
+impl ClientCertVerifier for ArcAllowList {
     fn offer_client_auth(&self) -> bool {
         true
     }
@@ -190,8 +181,14 @@ impl ClientCertVerifier for AllowList {
         let fingerprint = digest(&SHA256, &spki);
         let fingerprint_hex = hex::encode(fingerprint);
 
-        // Hash SPKI
-        if self.allow_list.contains_key(&fingerprint_hex) {
+        let is_allowed = {
+            let guard = self.allow_list.lock().map_err(|e| {
+                rustls::Error::General(format!("Failed to lock allow list: {:?}", e))
+            })?;
+            guard.is_allowed(&fingerprint_hex)
+        };
+
+        if is_allowed {
             info!("✅ Client authorized (fingerprint: {})", fingerprint_hex);
             Ok(ClientCertVerified::assertion())
         } else {

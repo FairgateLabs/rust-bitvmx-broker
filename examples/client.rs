@@ -44,7 +44,14 @@ fn main() -> anyhow::Result<()> {
     init_tracing()?;
 
     let certs = BrokerConfig::get_local_cert_files("peer1");
-    let client = Client::new(&BrokerConfig::new(flags.port, Some(flags.ip_addr), certs)).unwrap();
+    let allow_list = BrokerConfig::get_allow_list_from_file().unwrap();
+    let client = Client::new(&BrokerConfig::new(
+        flags.port,
+        Some(flags.ip_addr),
+        certs,
+        allow_list,
+    ))
+    .unwrap();
 
     match &flags.msg {
         Some(msg) => {

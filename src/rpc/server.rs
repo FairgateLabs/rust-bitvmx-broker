@@ -1,6 +1,5 @@
 use super::{BrokerConfig, Message, StorageApi};
-use crate::rpc::tls_helper::AllowList;
-use crate::rpc::Broker;
+use crate::rpc::{tls_helper::ArcAllowList, Broker};
 use futures::prelude::*;
 use rustls::ServerConfig;
 use std::{
@@ -79,12 +78,12 @@ where
     );
 
     // Load certs, private key, and allowlist
-    let allowlist = config.cert_files.load_allowlist_from_yaml()?;
+    let allowlist: Arc<Mutex<crate::allow_list::AllowList>> = config.allow_list;
     let certs = config.cert_files.load_certs()?;
     let key = config.cert_files.load_private_key()?;
 
     // Server config
-    let client_auth = Arc::new(AllowList::new(allowlist.clone()));
+    let client_auth = Arc::new(ArcAllowList::new(allowlist));
     let config = ServerConfig::builder()
         .with_client_cert_verifier(client_auth)
         .with_single_cert(certs, key)?;

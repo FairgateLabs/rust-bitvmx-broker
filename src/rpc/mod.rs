@@ -1,7 +1,12 @@
-use std::net::IpAddr;
+use std::{
+    net::IpAddr,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize};
 use tls_helper::CertFiles;
+
+use crate::{allow_list::AllowList, rpc::errors::BrokerError};
 
 pub mod client;
 pub mod errors;
@@ -28,14 +33,21 @@ pub struct BrokerConfig {
     pub port: u16,
     pub ip: Option<IpAddr>,
     pub cert_files: CertFiles,
+    pub allow_list: Arc<Mutex<AllowList>>,
 }
 
 impl BrokerConfig {
-    pub fn new(port: u16, ip: Option<IpAddr>, cert_files: CertFiles) -> Self {
+    pub fn new(
+        port: u16,
+        ip: Option<IpAddr>,
+        cert_files: CertFiles,
+        allow_list: Arc<Mutex<AllowList>>,
+    ) -> Self {
         Self {
             port,
             ip,
             cert_files,
+            allow_list,
         }
     }
 
@@ -44,8 +56,12 @@ impl BrokerConfig {
     pub fn get_local_cert_files(name: &str) -> CertFiles {
         let cert = format!("certs/{}.pem", name);
         let key = format!("certs/{}.key", name);
+        CertFiles::new(cert, key)
+    }
+    pub fn get_allow_list_from_file() -> Result<Arc<Mutex<AllowList>>, BrokerError> {
         let allow_list = "certs/allowlist.yaml".to_string();
-        CertFiles::new(allow_list, cert, key)
+        let allow_list = AllowList::from_file(allow_list)?;
+        Ok(Arc::new(Mutex::new(allow_list)))
     }
 }
 

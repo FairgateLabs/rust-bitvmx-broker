@@ -1,10 +1,12 @@
 use std::{
-    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex as ArcMutex},
 };
 
-use crate::rpc::tls_helper::{AllowList, CertFiles};
+use crate::{
+    allow_list::AllowList,
+    rpc::tls_helper::{ArcAllowList, CertFiles},
+};
 use rustls::pki_types::ServerName;
 
 use crate::rpc::BrokerClient;
@@ -20,20 +22,21 @@ pub struct Client {
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
     cert_files: CertFiles,
-    allow_list: HashMap<String, String>,
+    allow_list: Arc<ArcMutex<AllowList>>,
 }
-impl Clone for Client {
-    fn clone(&self) -> Self {
-        let rt = Runtime::new().unwrap();
-        Self {
-            rt: rt,
-            address: self.address,
-            client: Arc::clone(&self.client),
-            cert_files: self.cert_files.clone(),
-            allow_list: self.allow_list.clone(),
-        }
-    }
-}
+
+// impl Clone for Client {
+//     fn clone(&self) -> Self {
+//         let rt = Runtime::new().unwrap();
+//         Self {
+//             rt: rt,
+//             address: self.address,
+//             client: Arc::clone(&self.client),
+//             cert_files: self.cert_files.clone(),
+//             allow_list: self.allow_list,
+//         }
+//     }
+// }
 
 impl Client {
     pub fn new(config: &BrokerConfig) -> Result<Self, BrokerError> {
@@ -43,7 +46,7 @@ impl Client {
             config.port,
         );
         let cert_files = config.cert_files.clone();
-        let allow_list = cert_files.load_allowlist_from_yaml()?;
+        let allow_list = config.allow_list.clone();
         Ok(Self {
             rt,
             address,
@@ -64,7 +67,7 @@ impl Client {
         // Client config
         let config = ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AllowList::new(self.allow_list.clone())))
+            .with_custom_certificate_verifier(Arc::new(ArcAllowList::new(self.allow_list.clone())))
             .with_client_auth_cert(cert, key)
             .map_err(|e| BrokerError::TlsError(e.to_string()))?;
 

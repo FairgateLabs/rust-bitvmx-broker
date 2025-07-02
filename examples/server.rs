@@ -51,10 +51,12 @@ fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
     let certs = BrokerConfig::get_local_cert_files("server");
+    let allow_list = BrokerConfig::get_allow_list_from_file().unwrap();
     let config = BrokerConfig {
         port: flags.port,
         ip: None,
         cert_files: certs,
+        allow_list: allow_list,
     };
 
     #[cfg(not(feature = "storagebackend"))]
