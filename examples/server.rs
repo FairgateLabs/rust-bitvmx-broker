@@ -53,7 +53,7 @@ fn wait_ctrl() {
 fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
-    let cert = Cert::new("peer1").unwrap();
+    let cert = Cert::new().unwrap();
     let allow_list = AllowList::from_certs(vec![cert.clone()]).unwrap();
     let config = BrokerConfig {
         port: flags.port,

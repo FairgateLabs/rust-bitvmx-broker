@@ -23,17 +23,10 @@ use tracing_subscriber::{
 };
 
 #[cfg(not(feature = "storagebackend"))]
-fn prepare(
-    port: u16,
-) -> (
-    BrokerSync,
-    BrokerConfig,
-    Arc<Mutex<AllowList>>,
-    LocalChannel<MemStorage>,
-) {
+fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<MemStorage>) {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
-    let server_cert = Cert::new("server").unwrap();
-    let client_cert = Cert::new("peer1").unwrap();
+    let server_cert = Cert::new().unwrap();
+    let client_cert = Cert::new().unwrap();
     let allow_list = AllowList::from_certs(vec![server_cert.clone(), client_cert.clone()]).unwrap();
     let server_config = BrokerConfig::new(
         port,
@@ -51,18 +44,11 @@ fn prepare(
     );
     let local = LocalChannel::new(1, storage.clone());
 
-    (server, client_config, allow_list, local)
+    (server, client_config, local)
 }
 
 #[cfg(feature = "storagebackend")]
-fn prepare(
-    port: u16,
-) -> (
-    BrokerSync,
-    BrokerConfig,
-    Arc<Mutex<AllowList>>,
-    LocalChannel<BrokerStorage>,
-) {
+fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<BrokerStorage>) {
     let backend = Storage::new_with_path(&PathBuf::from(format!("storage_{}.db", port))).unwrap();
     let storage = Arc::new(Mutex::new(
         bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
@@ -89,7 +75,7 @@ fn prepare(
 
     let local = LocalChannel::new(1, storage.clone());
 
-    (server, config, allow_list, local)
+    (server, config, local)
 }
 
 fn cleanup_storage(port: u16) {
@@ -99,10 +85,9 @@ fn cleanup_storage(port: u16) {
 #[test]
 fn test_channel() {
     cleanup_storage(10000);
-    let (mut server, config, _, _) = prepare(10000);
+    let (mut server, config, _) = prepare(10000);
     let user_1 = DualChannel::new(&config, 1).unwrap();
     let user_2 = DualChannel::new(&config, 2).unwrap();
-
     user_1.send(2, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -114,7 +99,7 @@ fn test_channel() {
 #[test]
 fn test_ack() {
     cleanup_storage(10001);
-    let (mut server, config, _, _) = prepare(10001);
+    let (mut server, config, _) = prepare(10001);
 
     let client = Client::new(&config).unwrap();
     client.send_msg(1, 2, "Hello!".to_string()).unwrap();
@@ -133,7 +118,7 @@ fn test_ack() {
 #[test]
 fn test_reconnect() {
     cleanup_storage(10002);
-    let (mut server, config, _, _) = prepare(10002);
+    let (mut server, config, _) = prepare(10002);
     let client = Client::new(&config).unwrap();
 
     client.send_msg(1, 2, "Hello!".to_string()).unwrap();
@@ -144,7 +129,7 @@ fn test_reconnect() {
 
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    let (mut server, _config, _, _) = prepare(10002);
+    let (mut server, _config, _) = prepare(10002);
     std::thread::sleep(std::time::Duration::from_secs(1));
 
     client.send_msg(1, 2, "World!".to_string()).unwrap();
@@ -157,7 +142,7 @@ fn test_reconnect() {
 fn test_stress_channel() {
     init_tracing().unwrap();
     cleanup_storage(10003);
-    let (mut server, config, _, _) = prepare(10003);
+    let (mut server, config, _) = prepare(10003);
     let user_1 = DualChannel::new(&config, 1).unwrap();
     let user_2 = DualChannel::new(&config, 2).unwrap();
 
@@ -196,7 +181,7 @@ fn test_stress_channel() {
 #[test]
 fn test_local_channel() {
     cleanup_storage(10010);
-    let (mut server, config, _, user_1) = prepare(10010);
+    let (mut server, config, user_1) = prepare(10010);
     let user_2 = DualChannel::new(&config, 2).unwrap();
 
     user_1.send(2, "Hello!".to_string()).unwrap();
@@ -210,13 +195,40 @@ fn test_local_channel() {
 #[test]
 fn test_dinamic_allow_list() {
     cleanup_storage(10004);
-    let (mut server, config, allow_list, _) = prepare(10004);
-    let user_1 = DualChannel::new(&config, 1).unwrap();
-    let user_2 = DualChannel::new(&config, 2).unwrap();
-    let removed;
+    let port = 10004;
+    let storage = Arc::new(Mutex::new(MemStorage::new()));
+    let server_cert = Cert::new().unwrap();
+    let client_cert = Cert::new().unwrap();
+    let client_cert2 = Cert::new().unwrap();
+    let allow_list = AllowList::from_certs(vec![
+        server_cert.clone(),
+        client_cert.clone(),
+        client_cert2.clone(),
+    ])
+    .unwrap();
+    let server_config = BrokerConfig::new(
+        port,
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        server_cert,
+        allow_list.clone(),
+    );
+    let mut server = BrokerSync::new(&server_config, storage.clone());
+    let client_config = BrokerConfig::new(
+        port,
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        client_cert.clone(),
+        allow_list.clone(),
+    );
+
+    let user_1 = DualChannel::new(&client_config, 1).unwrap();
+    let user_2 = DualChannel::new(&client_config, 2).unwrap();
 
     {
-        removed = allow_list.lock().unwrap().remove_by_value("peer1");
+        allow_list
+            .lock()
+            .unwrap()
+            .remove_by_cert(&client_cert)
+            .unwrap();
     }
 
     let err = user_1.send(2, "Hello!".to_string()).unwrap_err();
@@ -224,9 +236,12 @@ fn test_dinamic_allow_list() {
     assert!(matches!(err, BrokerError::RpcError(RpcError::Channel(_))));
     assert!(matches!(msg, BrokerError::RpcError(RpcError::Channel(_))));
 
-    let (key, value) = removed.unwrap();
     {
-        allow_list.lock().unwrap().add(key, value);
+        allow_list
+            .lock()
+            .unwrap()
+            .add_by_cert(&client_cert)
+            .unwrap();
     }
     user_1.send(2, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();

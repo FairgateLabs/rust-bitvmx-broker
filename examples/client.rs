@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
     let flags = Flags::parse();
     init_tracing()?;
 
-    let cert = Cert::new("peer1").unwrap();
+    let cert = Cert::new().unwrap();
     let allow_list = AllowList::from_certs(vec![cert.clone()]).unwrap();
     let client = Client::new(&BrokerConfig::new(
         flags.port,

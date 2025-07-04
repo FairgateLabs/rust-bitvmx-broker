@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::{io, sync::Arc};
 
 use pem::Pem;
-use rcgen::{Certificate, CertificateParams, DnType};
+use rcgen::{Certificate, CertificateParams};
 use ring::digest::{digest, SHA256};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
@@ -17,19 +17,17 @@ use crate::allow_list::AllowList;
 
 #[derive(Debug, Clone)]
 pub struct Cert {
-    name: String,
     key_pem: String,
     cert_pem: String,
     spki_der: Vec<u8>,
 }
 
 impl Cert {
-    pub fn new(name: &str) -> Result<Self, anyhow::Error> {
-        let cert = Self::create_cert(name)?;
+    pub fn new() -> Result<Self, anyhow::Error> {
+        let cert = Self::create_cert()?;
         let (key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
-        info!("Created new certificate for {}", name);
+        info!("Created new certificate");
         Ok(Self {
-            name: name.to_string(),
             key_pem,
             cert_pem,
             spki_der,
@@ -72,10 +70,6 @@ impl Cert {
         Ok(hexsum)
     }
 
-    pub fn get_name(&self) -> String {
-        self.name.clone()
-    }
-
     pub fn from_file(path: &str, name: &str) -> Result<Self, anyhow::Error> {
         let cert_path = format!("{}/{}.pem", path, name);
         let key_path = format!("{}/{}.key", path, name);
@@ -96,18 +90,18 @@ impl Cert {
         let spki_der = parsed.tbs_certificate.subject_pki.raw.to_vec();
 
         Ok(Self {
-            name: name.to_string(),
             key_pem,
             cert_pem,
             spki_der,
         })
     }
 
-    fn create_cert(name: &str) -> Result<Certificate, anyhow::Error> {
+    fn create_cert() -> Result<Certificate, anyhow::Error> {
         let mut params = CertificateParams::new(vec![]);
-        let mut dn = rcgen::DistinguishedName::new();
-        dn.push(DnType::CommonName, name);
-        params.distinguished_name = dn;
+        // let mut dn = rcgen::DistinguishedName::new();
+        // dn.push(DnType::CommonName, name);
+        // params.distinguished_name = dn;
+        params.distinguished_name = rcgen::DistinguishedName::new();
         Ok(Certificate::from_params(params)?)
     }
 
