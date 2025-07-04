@@ -44,13 +44,17 @@ impl BrokerConfig {
         ip: Option<IpAddr>,
         cert: Cert,
         allow_list: Arc<Mutex<AllowList>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, BrokerError> {
+        allow_list
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Failed to lock allow list mutex"))?
+            .add_by_cert(&cert)?;
+        Ok(Self {
             port,
             ip,
             cert,
             allow_list,
-        }
+        })
     }
 
     // /// ⚠️ Test-only helper.

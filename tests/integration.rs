@@ -27,13 +27,14 @@ fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<MemStorage>) {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
     let server_cert = Cert::new().unwrap();
     let client_cert = Cert::new().unwrap();
-    let allow_list = AllowList::from_certs(vec![server_cert.clone(), client_cert.clone()]).unwrap();
+    let allow_list = AllowList::new();
     let server_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert,
         allow_list.clone(),
-    );
+    )
+    .unwrap();
     let server = BrokerSync::new(&server_config, storage.clone());
 
     let client_config = BrokerConfig::new(
@@ -41,7 +42,8 @@ fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<MemStorage>) {
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client_cert,
         allow_list.clone(),
-    );
+    )
+    .unwrap();
     let local = LocalChannel::new(1, storage.clone());
 
     (server, client_config, local)
@@ -56,14 +58,15 @@ fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<BrokerStorage>)
 
     let server_cert = Cert::new("server").unwrap();
     let client_cert = Cert::new("peer1").unwrap();
-    let allow_list = AllowList::from_certs(vec![server_cert.clone(), client_cert.clone()]).unwrap();
+    let allow_list = AllowList::new();
 
     let server_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert,
         allow_list.clone(),
-    );
+    )
+    .unwrap();
     let server = BrokerSync::new(&server_config, storage.clone());
 
     let client_config = BrokerConfig::new(
@@ -71,7 +74,8 @@ fn prepare(port: u16) -> (BrokerSync, BrokerConfig, LocalChannel<BrokerStorage>)
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client_cert,
         allow_list.clone(),
-    );
+    )
+    .unwrap();
 
     let local = LocalChannel::new(1, storage.clone());
 
@@ -199,26 +203,23 @@ fn test_dinamic_allow_list() {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
     let server_cert = Cert::new().unwrap();
     let client_cert = Cert::new().unwrap();
-    let client_cert2 = Cert::new().unwrap();
-    let allow_list = AllowList::from_certs(vec![
-        server_cert.clone(),
-        client_cert.clone(),
-        client_cert2.clone(),
-    ])
-    .unwrap();
+    let allow_list = AllowList::new();
+
     let server_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert,
         allow_list.clone(),
-    );
+    )
+    .unwrap();
     let mut server = BrokerSync::new(&server_config, storage.clone());
     let client_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client_cert.clone(),
         allow_list.clone(),
-    );
+    )
+    .unwrap();
 
     let user_1 = DualChannel::new(&client_config, 1).unwrap();
     let user_2 = DualChannel::new(&client_config, 2).unwrap();

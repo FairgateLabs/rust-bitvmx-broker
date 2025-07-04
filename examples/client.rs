@@ -48,13 +48,9 @@ fn main() -> anyhow::Result<()> {
 
     let cert = Cert::new().unwrap();
     let allow_list = AllowList::from_certs(vec![cert.clone()]).unwrap();
-    let client = Client::new(&BrokerConfig::new(
-        flags.port,
-        Some(flags.ip_addr),
-        cert,
-        allow_list,
-    ))
-    .unwrap();
+    let client =
+        Client::new(&BrokerConfig::new(flags.port, Some(flags.ip_addr), cert, allow_list).unwrap())
+            .unwrap();
 
     match &flags.msg {
         Some(msg) => {
