@@ -8,7 +8,10 @@ use std::{
 };
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
-use bitvmx_broker::rpc::{sync_server::BrokerSync, BrokerConfig};
+use bitvmx_broker::{
+    allow_list::AllowList,
+    rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
+};
 use clap::Parser;
 use tracing::info;
 
@@ -50,13 +53,13 @@ fn wait_ctrl() {
 fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
-    let certs = BrokerConfig::get_local_cert_files("server");
-    let allow_list = BrokerConfig::get_allow_list_from_file().unwrap();
+    let cert = Cert::new("peer1").unwrap();
+    let allow_list = AllowList::from_certs(vec![cert.clone()]).unwrap();
     let config = BrokerConfig {
         port: flags.port,
         ip: None,
-        cert_files: certs,
-        allow_list: allow_list,
+        cert,
+        allow_list,
     };
 
     #[cfg(not(feature = "storagebackend"))]

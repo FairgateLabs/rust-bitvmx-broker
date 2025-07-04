@@ -79,8 +79,8 @@ where
 
     // Load certs, private key, and allowlist
     let allowlist: Arc<Mutex<crate::allow_list::AllowList>> = config.allow_list;
-    let certs = config.cert_files.load_certs()?;
-    let key = config.cert_files.load_private_key()?;
+    let certs = config.cert.get_cert()?;
+    let key = config.cert.get_private_key()?;
 
     // Server config
     let client_auth = Arc::new(ArcAllowList::new(allowlist));

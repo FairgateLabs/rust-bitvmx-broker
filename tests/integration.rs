@@ -1,5 +1,6 @@
+use bitvmx_broker::rpc::tls_helper::Cert;
 use std::{
-    fs,
+    fs::{self},
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -31,21 +32,21 @@ fn prepare(
     LocalChannel<MemStorage>,
 ) {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
-    let allow_list = BrokerConfig::get_allow_list_from_file().unwrap();
-    let server_certs = BrokerConfig::get_local_cert_files("server");
+    let server_cert = Cert::new("server").unwrap();
+    let client_cert = Cert::new("peer1").unwrap();
+    let allow_list = AllowList::from_certs(vec![server_cert.clone(), client_cert.clone()]).unwrap();
     let server_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        server_certs,
+        server_cert,
         allow_list.clone(),
     );
     let server = BrokerSync::new(&server_config, storage.clone());
 
-    let client_certs = BrokerConfig::get_local_cert_files("peer1");
     let client_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client_certs,
+        client_cert,
         allow_list.clone(),
     );
     let local = LocalChannel::new(1, storage.clone());
@@ -67,21 +68,22 @@ fn prepare(
         bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
     ));
 
-    let allow_list = BrokerConfig::get_allow_list_from_file().unwrap();
-    let server_certs = BrokerConfig::get_local_cert_files("server");
+    let server_cert = Cert::new("server").unwrap();
+    let client_cert = Cert::new("peer1").unwrap();
+    let allow_list = AllowList::from_certs(vec![server_cert.clone(), client_cert.clone()]).unwrap();
+
     let server_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        server_certs,
+        server_cert,
         allow_list.clone(),
     );
     let server = BrokerSync::new(&server_config, storage.clone());
 
-    let client_certs = BrokerConfig::get_local_cert_files("peer1");
     let client_config = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client_certs,
+        client_cert,
         allow_list.clone(),
     );
 
@@ -211,7 +213,7 @@ fn test_dinamic_allow_list() {
     let (mut server, config, allow_list, _) = prepare(10004);
     let user_1 = DualChannel::new(&config, 1).unwrap();
     let user_2 = DualChannel::new(&config, 2).unwrap();
-    let mut removed = None;
+    let removed;
 
     {
         removed = allow_list.lock().unwrap().remove_by_value("peer1");
@@ -222,8 +224,8 @@ fn test_dinamic_allow_list() {
     assert!(matches!(err, BrokerError::RpcError(RpcError::Channel(_))));
     assert!(matches!(msg, BrokerError::RpcError(RpcError::Channel(_))));
 
+    let (key, value) = removed.unwrap();
     {
-        let (key, value) = removed.unwrap();
         allow_list.lock().unwrap().add(key, value);
     }
     user_1.send(2, "Hello!".to_string()).unwrap();

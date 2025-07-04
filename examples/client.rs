@@ -1,4 +1,7 @@
-use bitvmx_broker::rpc::{client::Client, BrokerConfig};
+use bitvmx_broker::{
+    allow_list::AllowList,
+    rpc::{client::Client, tls_helper::Cert, BrokerConfig},
+};
 use clap::Parser;
 use std::{net::IpAddr, thread::sleep, time::Duration};
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
@@ -43,12 +46,12 @@ fn main() -> anyhow::Result<()> {
     let flags = Flags::parse();
     init_tracing()?;
 
-    let certs = BrokerConfig::get_local_cert_files("peer1");
-    let allow_list = BrokerConfig::get_allow_list_from_file().unwrap();
+    let cert = Cert::new("peer1").unwrap();
+    let allow_list = AllowList::from_certs(vec![cert.clone()]).unwrap();
     let client = Client::new(&BrokerConfig::new(
         flags.port,
         Some(flags.ip_addr),
-        certs,
+        cert,
         allow_list,
     ))
     .unwrap();

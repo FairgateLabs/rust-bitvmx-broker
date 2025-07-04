@@ -14,8 +14,8 @@ pub enum BrokerError {
     #[error("Unauthorized fingerprint: {0}")]
     UnauthorizedFingerprint(String),
 
-    #[error("Failed to load TLS certs/keys/allowlist")]
-    LoadCertsAllow(#[from] anyhow::Error),
+    #[error("Failed with certs/keys/allowlist")]
+    AboutCertsAllow(#[from] anyhow::Error),
 
     #[error("Generic TLS error: {0}")]
     TlsError(String),

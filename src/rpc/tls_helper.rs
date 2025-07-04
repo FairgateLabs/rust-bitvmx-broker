@@ -1,65 +1,121 @@
+use std::sync::Mutex;
+use std::{io, sync::Arc};
+
+use pem::Pem;
+use rcgen::{Certificate, CertificateParams, DnType};
 use ring::digest::{digest, SHA256};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
-use rustls::{CertificateError, Error as RustlsError};
-use rustls::{DistinguishedName, RootCertStore, SignatureScheme};
-use std::sync::Mutex;
-use std::{io, sync::Arc};
+use rustls::{CertificateError, DistinguishedName, Error as RustlsError, SignatureScheme};
+use sha2::{Digest, Sha256};
 use tracing::info;
+use x509_parser::der_parser::der::parse_der_sequence;
 use x509_parser::parse_x509_certificate;
-
-use std::fs::File;
-use std::io::BufReader;
-use std::path::PathBuf;
 
 use crate::allow_list::AllowList;
 
 #[derive(Debug, Clone)]
-pub struct CertFiles {
-    // (my_cert.pem, my_key.key)
-    cert: String,
-    key: String,
+pub struct Cert {
+    name: String,
+    key_pem: String,
+    cert_pem: String,
+    spki_der: Vec<u8>,
 }
 
-impl CertFiles {
-    pub fn new(cert: String, key: String) -> Self {
-        Self { cert, key }
+impl Cert {
+    pub fn new(name: &str) -> Result<Self, anyhow::Error> {
+        let cert = Self::create_cert(name)?;
+        let (key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
+        info!("Created new certificate for {}", name);
+        Ok(Self {
+            name: name.to_string(),
+            key_pem,
+            cert_pem,
+            spki_der,
+        })
     }
 
-    pub fn load_certs(&self) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
-        let file = File::open(self.cert.clone())?;
-        let mut reader = BufReader::new(file);
-        let certs = rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
-        Ok(certs)
+    pub fn get_private_key(&self) -> Result<PrivateKeyDer<'static>, anyhow::Error> {
+        let block = pem::parse(self.key_pem.clone())?;
+        let key = PrivateKeyDer::try_from(block.contents()).map_err(anyhow::Error::msg)?;
+        Ok(key.clone_key())
     }
 
-    pub fn load_private_key(&self) -> Result<PrivateKeyDer<'static>, anyhow::Error> {
-        let file = File::open(self.key.clone())?;
-        let mut reader = BufReader::new(file);
-        let keys = rustls_pemfile::private_key(&mut reader)?
-            .ok_or_else(|| anyhow::anyhow!("No private key found"))?;
-        Ok(keys)
+    pub fn get_cert(&self) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
+        let blocks: Vec<Pem> = pem::parse_many(self.cert_pem.clone())?;
+
+        let cert = blocks
+            .into_iter()
+            .filter(|block| block.tag() == "CERTIFICATE")
+            .map(|block| {
+                let der_bytes = block.into_contents();
+                CertificateDer::from(der_bytes)
+            })
+            .collect();
+
+        Ok(cert)
     }
 
-    pub fn _load_root_store(cert_path: &str) -> Result<RootCertStore, anyhow::Error> {
-        let mut root_store = RootCertStore::empty();
-        let cert_file = File::open(cert_path)?;
-        let mut reader = BufReader::new(cert_file);
-        let certs: Vec<_> = rustls_pemfile::certs(&mut reader).collect::<Result<_, _>>()?;
-        for cert in certs {
-            root_store.add(cert)?;
-        }
-        Ok(root_store)
+    pub fn get_pubk_hash(&self) -> Result<String, anyhow::Error> {
+        let (_, seq) = parse_der_sequence(&self.spki_der)?;
+        let mut iter = seq.as_sequence()?.iter();
+        let _algorithm = iter
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Missing algorithm"))?;
+        let subject_pubkey = iter
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Missing subjectPublicKey"))?;
+        let bitstring = subject_pubkey.as_bitstring()?;
+        let fingerprint = Sha256::digest(bitstring);
+        let hexsum = hex::encode(fingerprint);
+        Ok(hexsum)
     }
 
-    fn _get_allowlist_path() -> Result<String, anyhow::Error> {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let binding = base.join("certs/allowlist.yaml");
-        let path = binding
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid wihtelist path"))?;
-        Ok(path.to_string())
+    pub fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn from_file(path: &str, name: &str) -> Result<Self, anyhow::Error> {
+        let cert_path = format!("{}/{}.pem", path, name);
+        let key_path = format!("{}/{}.key", path, name);
+
+        let cert_pem = std::fs::read_to_string(cert_path)?;
+        let key_pem = std::fs::read_to_string(key_path)?;
+
+        let cert_blocks = pem::parse_many(&cert_pem)?;
+        let first_cert_block = cert_blocks
+            .into_iter()
+            .find(|b| b.tag() == "CERTIFICATE")
+            .ok_or_else(|| {
+                anyhow::anyhow!("No certificate block found in PEM file for {}", name)
+            })?;
+
+        let cert_der = first_cert_block.contents();
+        let (_, parsed) = parse_x509_certificate(cert_der)?;
+        let spki_der = parsed.tbs_certificate.subject_pki.raw.to_vec();
+
+        Ok(Self {
+            name: name.to_string(),
+            key_pem,
+            cert_pem,
+            spki_der,
+        })
+    }
+
+    fn create_cert(name: &str) -> Result<Certificate, anyhow::Error> {
+        let mut params = CertificateParams::new(vec![]);
+        let mut dn = rcgen::DistinguishedName::new();
+        dn.push(DnType::CommonName, name);
+        params.distinguished_name = dn;
+        Ok(Certificate::from_params(params)?)
+    }
+
+    fn get_vars(cert: &Certificate) -> Result<(String, String, Vec<u8>), anyhow::Error> {
+        let key_pem = cert.serialize_private_key_pem();
+        let cert_pem = cert.serialize_pem()?;
+        let spki_der = cert.get_key_pair().public_key_der();
+        Ok((key_pem, cert_pem, spki_der))
     }
 }
 

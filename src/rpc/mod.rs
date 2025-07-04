@@ -4,9 +4,11 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tls_helper::CertFiles;
 
-use crate::{allow_list::AllowList, rpc::errors::BrokerError};
+use crate::{
+    allow_list::AllowList,
+    rpc::{errors::BrokerError, tls_helper::Cert},
+};
 
 pub mod client;
 pub mod errors;
@@ -32,7 +34,7 @@ pub(crate) trait Broker {
 pub struct BrokerConfig {
     pub port: u16,
     pub ip: Option<IpAddr>,
-    pub cert_files: CertFiles,
+    pub cert: Cert,
     pub allow_list: Arc<Mutex<AllowList>>,
 }
 
@@ -40,28 +42,26 @@ impl BrokerConfig {
     pub fn new(
         port: u16,
         ip: Option<IpAddr>,
-        cert_files: CertFiles,
+        cert: Cert,
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Self {
         Self {
             port,
             ip,
-            cert_files,
+            cert,
             allow_list,
         }
     }
 
-    /// ⚠️ Test-only helper.
-    /// Loads certs from `certs/` folder using provided `name`.
-    pub fn get_local_cert_files(name: &str) -> CertFiles {
-        let cert = format!("certs/{}.pem", name);
-        let key = format!("certs/{}.key", name);
-        CertFiles::new(cert, key)
+    // /// ⚠️ Test-only helper.
+    // /// Loads certs from `certs/` folder using provided `name`.
+    pub fn _get_local_cert_files(name: &str) -> Cert {
+        Cert::from_file("./certs", name).unwrap()
     }
-    pub fn get_allow_list_from_file() -> Result<Arc<Mutex<AllowList>>, BrokerError> {
-        let allow_list = "certs/allowlist.yaml".to_string();
+    pub fn _get_allow_list_from_file() -> Result<Arc<Mutex<AllowList>>, BrokerError> {
+        let allow_list = "allowlist.yaml".to_string();
         let allow_list = AllowList::from_file(allow_list)?;
-        Ok(Arc::new(Mutex::new(allow_list)))
+        Ok(allow_list)
     }
 }
 

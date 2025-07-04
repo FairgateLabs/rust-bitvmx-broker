@@ -23,6 +23,9 @@ x509-parser = "0.17.0"
 ring = "0.17.14"
 hex = "0.4.3"
 serde_yaml = "0.9.33"
+rcgen = "0.12.0"
+sha2 = "0.10"
+pem = "3.0.4"
 
 [dev-dependencies]
 ctrlc = "3.1.0"

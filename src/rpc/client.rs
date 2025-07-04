@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     allow_list::AllowList,
-    rpc::tls_helper::{ArcAllowList, CertFiles},
+    rpc::tls_helper::{ArcAllowList, Cert},
 };
 use rustls::pki_types::ServerName;
 
@@ -21,7 +21,7 @@ pub struct Client {
     rt: Runtime,
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
-    cert_files: CertFiles,
+    cert: Cert,
     allow_list: Arc<ArcMutex<AllowList>>,
 }
 
@@ -45,13 +45,13 @@ impl Client {
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,
         );
-        let cert_files = config.cert_files.clone();
+        let cert = config.cert.clone();
         let allow_list = config.allow_list.clone();
         Ok(Self {
             rt,
             address,
             client: Arc::new(Mutex::new(None)),
-            cert_files,
+            cert,
             allow_list,
         })
     }
@@ -61,8 +61,8 @@ impl Client {
         stream.set_nodelay(true)?;
 
         // Load certs and private key
-        let cert = self.cert_files.load_certs()?;
-        let key = self.cert_files.load_private_key()?;
+        let cert = self.cert.get_cert()?;
+        let key = self.cert.get_private_key()?;
 
         // Client config
         let config = ClientConfig::builder()
