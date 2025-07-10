@@ -19,4 +19,13 @@ pub enum BrokerError {
 
     #[error("Generic TLS error: {0}")]
     TlsError(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(String),
+
+    #[error("Failed to get address: {0}")]
+    AddressError(#[from] std::net::AddrParseError),
+
+    #[error("Mutex error: {0}")]
+    MutexError(String),
 }

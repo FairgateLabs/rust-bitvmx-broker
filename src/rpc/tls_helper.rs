@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::{io, sync::Arc};
 
 use pem::Pem;
-use rcgen::{Certificate, CertificateParams};
+use rcgen::{Certificate, CertificateParams, KeyPair};
 use ring::digest::{digest, SHA256};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
@@ -24,9 +24,20 @@ pub struct Cert {
 
 impl Cert {
     pub fn new() -> Result<Self, anyhow::Error> {
-        let cert = Self::create_cert()?;
+        let cert = Self::create_cert(None)?;
         let (key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
         info!("Created new certificate");
+        Ok(Self {
+            key_pem,
+            cert_pem,
+            spki_der,
+        })
+    }
+
+    /// privk is a hex string in DER format.
+    pub fn new_with_privk(privk: &str) -> Result<Self, anyhow::Error> {
+        let cert = Self::create_cert(Some(privk))?;
+        let (key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
         Ok(Self {
             key_pem,
             cert_pem,
@@ -55,7 +66,13 @@ impl Cert {
         Ok(cert)
     }
 
-    pub fn get_pubk_hash(&self) -> Result<String, anyhow::Error> {
+    // SPKI format:
+    // SEQUENCE {
+    //   AlgorithmIdentifier (rsaEncryption)
+    //   BIT STRING (the RSAPublicKey)
+    // }
+    // This function extracts the SPKI bit string and computes its SHA256 hash.
+    pub fn _get_bitstring_pubk_hash(&self) -> Result<String, anyhow::Error> {
         let (_, seq) = parse_der_sequence(&self.spki_der)?;
         let mut iter = seq.as_sequence()?.iter();
         let _algorithm = iter
@@ -66,6 +83,13 @@ impl Cert {
             .ok_or_else(|| anyhow::anyhow!("Missing subjectPublicKey"))?;
         let bitstring = subject_pubkey.as_bitstring()?;
         let fingerprint = Sha256::digest(bitstring);
+        let hexsum = hex::encode(fingerprint);
+        Ok(hexsum)
+    }
+
+    pub fn get_pubk_hash(&self) -> Result<String, anyhow::Error> {
+        let _pubk_hexstring = hex::encode(&self.spki_der);
+        let fingerprint = Sha256::digest(&self.spki_der);
         let hexsum = hex::encode(fingerprint);
         Ok(hexsum)
     }
@@ -96,12 +120,16 @@ impl Cert {
         })
     }
 
-    fn create_cert() -> Result<Certificate, anyhow::Error> {
-        let mut params = CertificateParams::new(vec![]);
-        // let mut dn = rcgen::DistinguishedName::new();
-        // dn.push(DnType::CommonName, name);
-        // params.distinguished_name = dn;
-        params.distinguished_name = rcgen::DistinguishedName::new();
+    fn create_cert(privk: Option<&str>) -> Result<Certificate, anyhow::Error> {
+        let mut params = CertificateParams::default();
+
+        if let Some(privk_str) = privk {
+            let der_bytes = hex::decode(privk_str)?;
+            let keypair = KeyPair::from_der(&der_bytes)?;
+            params.key_pair = Some(keypair);
+            params.alg = &rcgen::PKCS_RSA_SHA256;
+        }
+
         Ok(Certificate::from_params(params)?)
     }
 
@@ -124,6 +152,21 @@ impl ArcAllowList {
     }
 }
 
+pub fn get_fingerprint_hex(cert: &CertificateDer<'_>) -> Result<String, anyhow::Error> {
+    // Parse cert
+    let (_, parsed_cert) = parse_x509_certificate(cert.as_ref())
+        .map_err(|e| rustls::Error::General(format!("Cert parse error: {:?}", e)))?;
+
+    // Extract SPKI
+    let spki = parsed_cert.tbs_certificate.subject_pki.raw;
+    // .subject_public_key
+    // .data;
+
+    // Hash SPKI
+    let fingerprint = digest(&SHA256, spki);
+    Ok(hex::encode(fingerprint.as_ref()))
+}
+
 impl ServerCertVerifier for ArcAllowList {
     fn verify_server_cert(
         &self,
@@ -133,26 +176,14 @@ impl ServerCertVerifier for ArcAllowList {
         _ocsp: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        // Parse cert
-        let (_, parsed_cert) = parse_x509_certificate(cert.as_ref())
-            .map_err(|e| rustls::Error::General(format!("Cert parse error: {:?}", e)))?;
-
-        // Extract SPKI
-        let spki = parsed_cert
-            .tbs_certificate
-            .subject_pki
-            .subject_public_key
-            .data;
-
-        // Hash SPKI
-        let fingerprint = digest(&SHA256, &spki);
-        let fingerprint_hex = hex::encode(fingerprint.as_ref());
+        let fingerprint_hex = get_fingerprint_hex(cert)
+            .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {:?}", e)))?;
 
         let is_allowed = {
             let guard = self.allow_list.lock().map_err(|e| {
                 rustls::Error::General(format!("Failed to lock allow list: {:?}", e))
             })?;
-            guard.is_allowed(&fingerprint_hex)
+            guard.is_allowed_by_fingerprint(&fingerprint_hex)
         };
 
         if is_allowed {
@@ -216,26 +247,14 @@ impl ClientCertVerifier for ArcAllowList {
         _intermediates: &[CertificateDer<'_>],
         _now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        // Parse cert
-        let (_, parsed_cert) = parse_x509_certificate(cert.as_ref())
-            .map_err(|e| rustls::Error::General(format!("Cert parse error: {:?}", e)))?;
-
-        // Extract SPKI
-        let spki = parsed_cert
-            .tbs_certificate
-            .subject_pki
-            .subject_public_key
-            .data;
-
-        // Compute SHA256 fingerprint
-        let fingerprint = digest(&SHA256, &spki);
-        let fingerprint_hex = hex::encode(fingerprint);
+        let fingerprint_hex = get_fingerprint_hex(cert)
+            .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {:?}", e)))?;
 
         let is_allowed = {
             let guard = self.allow_list.lock().map_err(|e| {
                 rustls::Error::General(format!("Failed to lock allow list: {:?}", e))
             })?;
-            guard.is_allowed(&fingerprint_hex)
+            guard.is_allowed_by_fingerprint(&fingerprint_hex)
         };
 
         if is_allowed {

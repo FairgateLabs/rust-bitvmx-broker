@@ -1,9 +1,13 @@
 use super::{BrokerConfig, Message, StorageApi};
-use crate::rpc::{tls_helper::ArcAllowList, Broker};
+use crate::rpc::{
+    tls_helper::{get_fingerprint_hex, ArcAllowList},
+    Broker,
+};
 use futures::prelude::*;
 use rustls::ServerConfig;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 use tarpc::serde_transport;
@@ -40,16 +44,16 @@ impl<S> Broker for BrokerServer<S>
 where
     S: StorageApi + 'static + Send + Sync,
 {
-    async fn send(self, _: context::Context, from: u32, dest: u32, msg: String) -> bool {
+    async fn send(self, _: context::Context, from: String, dest: String, msg: String) -> bool {
         self.storage.lock().unwrap().insert(from, dest, msg);
         true
     }
 
-    async fn get(self, _: context::Context, dest: u32) -> Option<Message> {
+    async fn get(self, _: context::Context, dest: String) -> Option<Message> {
         self.storage.lock().unwrap().get(dest)
     }
 
-    async fn ack(self, _: context::Context, dest: u32, uid: u64) -> bool {
+    async fn ack(self, _: context::Context, dest: String, uid: u64) -> bool {
         self.storage.lock().unwrap().remove(dest, uid)
     }
 }
@@ -83,7 +87,7 @@ where
     let key = config.cert.get_private_key()?;
 
     // Server config
-    let client_auth = Arc::new(ArcAllowList::new(allowlist));
+    let client_auth = Arc::new(ArcAllowList::new(allowlist.clone()));
     let config = ServerConfig::builder()
         .with_client_cert_verifier(client_auth)
         .with_single_cert(certs, key)?;
@@ -104,6 +108,7 @@ where
                 // Clone for async task
                 let acceptor = tls_acceptor.clone();
                 let storage = storage.clone();
+                let allowlist = allowlist.clone();
 
                 // Spawn a new task for each connection
                 tokio::spawn(async move {
@@ -111,7 +116,49 @@ where
                     // Perform TLS handshake
                     let tls_stream = match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
-                            tls_stream
+                            let peer_addr = match tls_stream.get_ref().0.peer_addr() {
+                                Ok(addr) => addr,
+                                Err(e) => {
+                                    error!("Failed to get peer address: {:?}", e);
+                                    return;
+                                }
+                            };
+                            let ipaddr = match IpAddr::from_str(&peer_addr.ip().to_string()) {
+                                Ok(ip) => ip,
+                                Err(e) => {
+                                    error!("Invalid IP address format: {:?}", e);
+                                    return;
+                                }
+                            };
+                            let cert = match tls_stream.get_ref().1.peer_certificates() {
+                                Some(certs) if !certs.is_empty() => certs[0].clone(),
+                                _ => {
+                                    error!("No peer certificate found");
+                                    return;
+                                }
+                            };
+                            let hex_fingerprint = match get_fingerprint_hex(&cert) {
+                                Ok(fingerprint) => fingerprint,
+                                Err(e) => {
+                                    error!("Failed to get fingerprint: {:?}", e);
+                                    return;
+                                }
+                            };
+                            let allow = match allowlist.lock() {
+                                Ok(guard) => guard.is_allowed(&hex_fingerprint, ipaddr),
+                                Err(e) => {
+                                    error!("Failed to lock allowlist: {:?}", e);
+                                    return;
+                                }
+                            };
+
+                            match allow {
+                                true => tls_stream,
+                                false => {
+                                    error!("Unauthorized fingerprint with address {}: {}", peer_addr, hex_fingerprint);
+                                    return;
+                                }
+                            }
                         },
                         Err(e) => {
                             error!("TLS handshake failed: {:?}", e);

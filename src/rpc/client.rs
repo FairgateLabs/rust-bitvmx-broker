@@ -1,13 +1,15 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
     sync::{Arc, Mutex as ArcMutex},
 };
 
 use crate::{
     allow_list::AllowList,
-    rpc::tls_helper::{ArcAllowList, Cert},
+    rpc::tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
 };
 use rustls::pki_types::ServerName;
+use tracing::info;
 
 use crate::rpc::BrokerClient;
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
@@ -47,6 +49,7 @@ impl Client {
         );
         let cert = config.cert.clone();
         let allow_list = config.allow_list.clone();
+        info!("Client address: {}", address);
         Ok(Self {
             rt,
             address,
@@ -77,6 +80,33 @@ impl Client {
             ServerName::try_from("localhost").map_err(|e| BrokerError::TlsError(e.to_string()))?;
         let tls_stream = connector.connect(domain, stream).await?;
 
+        let peer_certs = tls_stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .ok_or_else(|| BrokerError::TlsError("No peer certificate".into()))?;
+
+        let server_cert = peer_certs
+            .first()
+            .ok_or_else(|| BrokerError::TlsError("Empty peer certificate list".into()))?;
+
+        let server_fingerprint = get_fingerprint_hex(server_cert)
+            .map_err(|e| BrokerError::TlsError(format!("Fingerprint error: {e}")))?;
+
+        let peer_addr = tls_stream.get_ref().0.peer_addr()?;
+        let ipaddr = IpAddr::from_str(&peer_addr.ip().to_string())?;
+
+        let allow = self
+            .allow_list
+            .lock()
+            .map_err(|e| BrokerError::MutexError(e.to_string()))?
+            .is_allowed(&server_fingerprint, ipaddr);
+
+        if !allow {
+            drop(tls_stream);
+            return Err(BrokerError::UnauthorizedFingerprint(server_fingerprint));
+        }
+
         // Server is authorized
         let framed = Framed::new(tls_stream, LengthDelimitedCodec::new());
         let transport = serde_transport::new(framed, Json::default());
@@ -92,7 +122,9 @@ impl Client {
 
             if let Some(client) = locked.as_ref().cloned() {
                 // Check if the client is still connected
-                let test = client.get(context::current(), u32::MAX).await;
+                let test = client
+                    .get(context::current(), "test-dest".to_string())
+                    .await;
                 if test.is_ok() {
                     return Ok(client);
                 }
@@ -112,30 +144,35 @@ impl Client {
         Err(BrokerError::Disconnected)
     }
 
-    async fn async_send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
+    async fn async_send_msg(
+        &self,
+        from: String,
+        dest: String,
+        msg: String,
+    ) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.send(context::current(), from, dest, msg).await?)
     }
 
-    async fn async_get_msg(&self, dest: u32) -> Result<Option<Message>, BrokerError> {
+    async fn async_get_msg(&self, dest: String) -> Result<Option<Message>, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.get(context::current(), dest).await?)
     }
 
-    async fn async_ack(&self, dest: u32, uid: u64) -> Result<bool, BrokerError> {
+    async fn async_ack(&self, dest: String, uid: u64) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.ack(context::current(), dest, uid).await?)
     }
 
-    pub fn send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
+    pub fn send_msg(&self, from: String, dest: String, msg: String) -> Result<bool, BrokerError> {
         self.rt.block_on(self.async_send_msg(from, dest, msg))
     }
 
-    pub fn get_msg(&self, dest: u32) -> Result<Option<Message>, BrokerError> {
+    pub fn get_msg(&self, dest: String) -> Result<Option<Message>, BrokerError> {
         self.rt.block_on(self.async_get_msg(dest))
     }
 
-    pub fn ack(&self, dest: u32, uid: u64) -> Result<bool, BrokerError> {
+    pub fn ack(&self, dest: String, uid: u64) -> Result<bool, BrokerError> {
         self.rt.block_on(self.async_ack(dest, uid))
     }
 }

@@ -19,23 +19,23 @@ pub mod tls_helper;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
     pub uid: u64,
-    pub from: u32,
+    pub from: String, // Public key hash
     pub msg: String,
 }
 
 #[tarpc::service]
 pub(crate) trait Broker {
-    async fn send(from: u32, dest: u32, msg: String) -> bool;
-    async fn get(dest: u32) -> Option<Message>;
-    async fn ack(dest: u32, uid: u64) -> bool;
+    async fn send(from: String, dest: String, msg: String) -> bool;
+    async fn get(dest: String) -> Option<Message>;
+    async fn ack(dest: String, uid: u64) -> bool;
 }
 
 #[derive(Clone)]
 pub struct BrokerConfig {
-    pub port: u16,
-    pub ip: Option<IpAddr>,
-    pub cert: Cert,
-    pub allow_list: Arc<Mutex<AllowList>>,
+    port: u16,
+    ip: Option<IpAddr>,
+    cert: Cert,
+    allow_list: Arc<Mutex<AllowList>>,
 }
 
 impl BrokerConfig {
@@ -45,10 +45,6 @@ impl BrokerConfig {
         cert: Cert,
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self, BrokerError> {
-        allow_list
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Failed to lock allow list mutex"))?
-            .add_by_cert(&cert)?;
         Ok(Self {
             port,
             ip,
@@ -67,10 +63,13 @@ impl BrokerConfig {
         let allow_list = AllowList::from_file(allow_list)?;
         Ok(allow_list)
     }
+    pub fn get_cert(&self) -> Cert {
+        self.cert.clone()
+    }
 }
 
 pub trait StorageApi {
-    fn get(&mut self, dest: u32) -> Option<Message>;
-    fn insert(&mut self, from: u32, dest: u32, msg: String);
-    fn remove(&mut self, dest: u32, uid: u64) -> bool;
+    fn get(&mut self, dest: String) -> Option<Message>;
+    fn insert(&mut self, from: String, dest: String, msg: String);
+    fn remove(&mut self, dest: String, uid: u64) -> bool;
 }

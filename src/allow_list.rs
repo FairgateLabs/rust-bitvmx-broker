@@ -1,6 +1,7 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs,
+    net::IpAddr,
     sync::{Arc, Mutex},
 };
 
@@ -9,43 +10,75 @@ use tracing::info;
 
 use crate::rpc::tls_helper::Cert;
 
+pub type Address = IpAddr;
+
 #[derive(Debug)]
 pub struct AllowList {
-    allow_list: HashSet<String>, // pubkey_hash
+    allow_list: HashMap<String, Address>, // (pubkey_hash, address)
+    allow_all: bool,                      // if true, all pubkey_hashes are allowed
 }
 
 impl AllowList {
     pub fn new() -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(Self {
-            allow_list: HashSet::new(),
+            allow_list: HashMap::new(),
+            allow_all: false,
         }))
     }
 
     pub fn from_file(allow_list_path: String) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
         let content = fs::read_to_string(allow_list_path)?;
-        let allow_list: HashSet<String> = serde_yaml::from_str(&content)?;
-        Ok(Arc::new(Mutex::new(Self { allow_list })))
+        let allow_list: HashMap<String, Address> = serde_yaml::from_str(&content)?;
+        Ok(Arc::new(Mutex::new(Self {
+            allow_list,
+            allow_all: false,
+        })))
     }
 
-    pub fn from_certs(certs: Vec<Cert>) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
-        let mut allow_list = HashSet::new();
-        for cert in certs {
+    pub fn from_certs(
+        certs: Vec<Cert>,
+        addrs: Vec<Address>,
+    ) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
+        let mut allow_list = HashMap::new();
+        for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             let pubkey_hash = cert.get_pubk_hash()?;
-            allow_list.insert(pubkey_hash);
+            allow_list.insert(pubkey_hash, addr);
         }
-        Ok(Arc::new(Mutex::new(Self { allow_list })))
+        Ok(Arc::new(Mutex::new(Self {
+            allow_list,
+            allow_all: false,
+        })))
     }
 
-    pub fn is_allowed(&self, key: &str) -> bool {
-        self.allow_list.contains(key)
+    pub fn allow_all(&mut self) {
+        self.allow_all = true;
     }
 
-    pub fn add(&mut self, key: String) {
-        self.allow_list.insert(key);
+    pub fn is_allowed(&self, pubk_hash: &str, addr: Address) -> bool {
+        if self.allow_all {
+            return true;
+        }
+
+        match self.allow_list.get(pubk_hash) {
+            Some(stored_addr) => *stored_addr == addr,
+            None => false,
+        }
     }
 
-    pub fn remove(&mut self, key: &str) {
-        self.allow_list.remove(key);
+    pub fn is_allowed_by_fingerprint(&self, pubk_hash: &str) -> bool {
+        if self.allow_all {
+            return true;
+        }
+
+        self.allow_list.get(pubk_hash).is_some()
+    }
+
+    pub fn add(&mut self, pubk_hash: String, addr: Address) {
+        self.allow_list.insert(pubk_hash, addr);
+    }
+
+    pub fn remove(&mut self, pubk_hash: &str) {
+        self.allow_list.remove(pubk_hash);
     }
 
     pub fn remove_by_cert(&mut self, cert: &Cert) -> Result<(), anyhow::Error> {
@@ -54,9 +87,20 @@ impl AllowList {
         Ok(())
     }
 
-    pub fn add_by_cert(&mut self, cert: &Cert) -> Result<(), anyhow::Error> {
+    pub fn add_by_cert(&mut self, cert: &Cert, addr: Address) -> Result<(), anyhow::Error> {
         let pubkey_hash = cert.get_pubk_hash()?;
-        self.allow_list.insert(pubkey_hash);
+        self.allow_list.insert(pubkey_hash, addr);
+        Ok(())
+    }
+
+    pub fn add_by_certs(
+        &mut self,
+        certs: Vec<Cert>,
+        addrs: Vec<Address>,
+    ) -> Result<(), anyhow::Error> {
+        for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
+            self.add_by_cert(&cert, addr)?;
+        }
         Ok(())
     }
 

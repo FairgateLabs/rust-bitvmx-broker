@@ -1,4 +1,5 @@
 use std::{
+    net::{IpAddr, Ipv4Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -54,13 +55,9 @@ fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
     let cert = Cert::new().unwrap();
-    let allow_list = AllowList::from_certs(vec![cert.clone()]).unwrap();
-    let config = BrokerConfig {
-        port: flags.port,
-        ip: None,
-        cert,
-        allow_list,
-    };
+    let allow_list =
+        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
+    let config = BrokerConfig::new(flags.port, None, cert, allow_list).unwrap();
 
     #[cfg(not(feature = "storagebackend"))]
     let storage = Arc::new(Mutex::new(
