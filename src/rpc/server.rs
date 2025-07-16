@@ -1,23 +1,25 @@
 use super::{BrokerConfig, Message, StorageApi};
-use crate::rpc::{
-    tls_helper::{get_fingerprint_hex, ArcAllowList},
-    Broker,
+use crate::{
+    allow_list::AllowList,
+    rpc::{
+        tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
+        Broker,
+    },
 };
-use futures::prelude::*;
+use futures::StreamExt;
 use rustls::ServerConfig;
 use std::{
+    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
     sync::{Arc, Mutex},
 };
-use tarpc::serde_transport;
 use tarpc::{
-    context,
+    context, serde_transport,
     server::{self, Channel},
     tokio_serde::formats::Json,
 };
-use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::{net::TcpListener, sync::mpsc};
 use tokio_rustls::TlsAcceptor;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{error, info};
@@ -67,6 +69,8 @@ pub async fn run<S>(
     mut shutdown: ShutDownSignal,
     storage: Arc<Mutex<S>>,
     config: BrokerConfig,
+    cert: Cert,
+    allow_list: Arc<Mutex<AllowList>>,
 ) -> anyhow::Result<()>
 where
     S: 'static + Send + Sync + StorageApi + Clone,
@@ -82,16 +86,15 @@ where
     );
 
     // Load certs, private key, and allowlist
-    let allowlist: Arc<Mutex<crate::allow_list::AllowList>> = config.allow_list;
-    let certs = config.cert.get_cert()?;
-    let key = config.cert.get_private_key()?;
+    let certs = cert.get_cert()?;
+    let key = cert.get_private_key()?;
 
     // Server config
-    let client_auth = Arc::new(ArcAllowList::new(allowlist.clone()));
-    let config = ServerConfig::builder()
+    let client_auth = Arc::new(ArcAllowList::new(allow_list.clone()));
+    let server_config = ServerConfig::builder()
         .with_client_cert_verifier(client_auth)
         .with_single_cert(certs, key)?;
-    let tls_acceptor = TlsAcceptor::from(Arc::new(config));
+    let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
     tokio::select! {
         _ = async {
@@ -108,7 +111,7 @@ where
                 // Clone for async task
                 let acceptor = tls_acceptor.clone();
                 let storage = storage.clone();
-                let allowlist = allowlist.clone();
+                let allowlist = allow_list.clone();
 
                 // Spawn a new task for each connection
                 tokio::spawn(async move {
@@ -116,6 +119,8 @@ where
                     // Perform TLS handshake
                     let tls_stream = match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
+
+                            // Chreck if the client is authorized on the allowlist
                             let peer_addr = match tls_stream.get_ref().0.peer_addr() {
                                 Ok(addr) => addr,
                                 Err(e) => {
@@ -151,7 +156,6 @@ where
                                     return;
                                 }
                             };
-
                             match allow {
                                 true => tls_stream,
                                 false => {

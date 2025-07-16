@@ -1,6 +1,5 @@
-use std::collections::{HashMap, VecDeque};
-
 use crate::rpc::{Message, StorageApi};
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Debug)]
 pub struct MemStorage {

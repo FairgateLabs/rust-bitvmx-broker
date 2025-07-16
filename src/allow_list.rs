@@ -1,21 +1,16 @@
+use crate::rpc::tls_helper::Cert;
 use std::{
     collections::HashMap,
     fs,
     net::IpAddr,
     sync::{Arc, Mutex},
 };
-
-use anyhow::Ok;
 use tracing::info;
-
-use crate::rpc::tls_helper::Cert;
-
-pub type Address = IpAddr;
 
 #[derive(Debug)]
 pub struct AllowList {
-    allow_list: HashMap<String, Address>, // (pubkey_hash, address)
-    allow_all: bool,                      // if true, all pubkey_hashes are allowed
+    allow_list: HashMap<String, IpAddr>, // (pubkey_hash, IpAddr)
+    allow_all: bool,                     // if true, all pubkey_hashes are allowed
 }
 
 impl AllowList {
@@ -25,19 +20,17 @@ impl AllowList {
             allow_all: false,
         }))
     }
-
-    pub fn from_file(allow_list_path: String) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
+    pub fn from_file(allow_list_path: &str) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
         let content = fs::read_to_string(allow_list_path)?;
-        let allow_list: HashMap<String, Address> = serde_yaml::from_str(&content)?;
+        let allow_list: HashMap<String, IpAddr> = serde_yaml::from_str(&content)?;
         Ok(Arc::new(Mutex::new(Self {
             allow_list,
             allow_all: false,
         })))
     }
-
     pub fn from_certs(
         certs: Vec<Cert>,
-        addrs: Vec<Address>,
+        addrs: Vec<IpAddr>,
     ) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
         let mut allow_list = HashMap::new();
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
@@ -53,8 +46,7 @@ impl AllowList {
     pub fn allow_all(&mut self) {
         self.allow_all = true;
     }
-
-    pub fn is_allowed(&self, pubk_hash: &str, addr: Address) -> bool {
+    pub fn is_allowed(&self, pubk_hash: &str, addr: IpAddr) -> bool {
         if self.allow_all {
             return true;
         }
@@ -64,39 +56,33 @@ impl AllowList {
             None => false,
         }
     }
-
     pub fn is_allowed_by_fingerprint(&self, pubk_hash: &str) -> bool {
         if self.allow_all {
             return true;
         }
-
-        self.allow_list.get(pubk_hash).is_some()
+        self.allow_list.contains_key(pubk_hash)
     }
 
-    pub fn add(&mut self, pubk_hash: String, addr: Address) {
+    pub fn add(&mut self, pubk_hash: String, addr: IpAddr) {
         self.allow_list.insert(pubk_hash, addr);
     }
-
     pub fn remove(&mut self, pubk_hash: &str) {
         self.allow_list.remove(pubk_hash);
     }
-
     pub fn remove_by_cert(&mut self, cert: &Cert) -> Result<(), anyhow::Error> {
         let pubkey_hash = cert.get_pubk_hash()?;
         self.allow_list.remove(&pubkey_hash);
         Ok(())
     }
-
-    pub fn add_by_cert(&mut self, cert: &Cert, addr: Address) -> Result<(), anyhow::Error> {
+    pub fn add_by_cert(&mut self, cert: &Cert, addr: IpAddr) -> Result<(), anyhow::Error> {
         let pubkey_hash = cert.get_pubk_hash()?;
         self.allow_list.insert(pubkey_hash, addr);
         Ok(())
     }
-
     pub fn add_by_certs(
         &mut self,
         certs: Vec<Cert>,
-        addrs: Vec<Address>,
+        addrs: Vec<IpAddr>,
     ) -> Result<(), anyhow::Error> {
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             self.add_by_cert(&cert, addr)?;
@@ -110,5 +96,10 @@ impl AllowList {
         fs::write(path, yaml)?;
         info!("Allow list saved to allowlist.yaml");
         Ok(())
+    }
+
+    pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, anyhow::Error> {
+        let cert = Cert::new_with_privk(privk)?;
+        cert.get_pubk_hash()
     }
 }

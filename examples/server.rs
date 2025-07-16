@@ -57,7 +57,7 @@ fn main() {
     let cert = Cert::new().unwrap();
     let allow_list =
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
-    let config = BrokerConfig::new(flags.port, None, cert, allow_list).unwrap();
+    let config = BrokerConfig::new(flags.port, None, cert.get_pubk_hash().unwrap()).unwrap();
 
     #[cfg(not(feature = "storagebackend"))]
     let storage = Arc::new(Mutex::new(
@@ -72,7 +72,7 @@ fn main() {
         bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
     ));
 
-    let mut server = BrokerSync::new(&config, storage.clone());
+    let mut server = BrokerSync::new(&config, storage.clone(), cert, allow_list.clone());
 
     wait_ctrl();
     server.close();

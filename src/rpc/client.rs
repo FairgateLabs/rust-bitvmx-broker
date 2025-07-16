@@ -1,23 +1,22 @@
+use super::errors::BrokerError;
+use crate::{
+    allow_list::AllowList,
+    rpc::{
+        tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
+        BrokerClient, BrokerConfig, Message,
+    },
+};
+use rustls::pki_types::ServerName;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
     sync::{Arc, Mutex as ArcMutex},
 };
-
-use crate::{
-    allow_list::AllowList,
-    rpc::tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
-};
-use rustls::pki_types::ServerName;
-use tracing::info;
-
-use crate::rpc::BrokerClient;
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
 use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
 use tokio_rustls::{rustls::ClientConfig, TlsConnector};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-use super::{errors::BrokerError, BrokerConfig, Message};
+use tracing::info;
 
 pub struct Client {
     rt: Runtime,
@@ -41,14 +40,16 @@ pub struct Client {
 // }
 
 impl Client {
-    pub fn new(config: &BrokerConfig) -> Result<Self, BrokerError> {
+    pub fn new(
+        config: &BrokerConfig,
+        cert: Cert,
+        allow_list: Arc<ArcMutex<AllowList>>,
+    ) -> Result<Self, BrokerError> {
         let rt = Runtime::new()?;
         let address = SocketAddr::new(
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,
         );
-        let cert = config.cert.clone();
-        let allow_list = config.allow_list.clone();
         info!("Client address: {}", address);
         Ok(Self {
             rt,
@@ -79,29 +80,25 @@ impl Client {
         let domain =
             ServerName::try_from("localhost").map_err(|e| BrokerError::TlsError(e.to_string()))?;
         let tls_stream = connector.connect(domain, stream).await?;
-
         let peer_certs = tls_stream
             .get_ref()
             .1
             .peer_certificates()
             .ok_or_else(|| BrokerError::TlsError("No peer certificate".into()))?;
-
         let server_cert = peer_certs
             .first()
             .ok_or_else(|| BrokerError::TlsError("Empty peer certificate list".into()))?;
 
+        // Check against allow list
         let server_fingerprint = get_fingerprint_hex(server_cert)
             .map_err(|e| BrokerError::TlsError(format!("Fingerprint error: {e}")))?;
-
         let peer_addr = tls_stream.get_ref().0.peer_addr()?;
         let ipaddr = IpAddr::from_str(&peer_addr.ip().to_string())?;
-
         let allow = self
             .allow_list
             .lock()
             .map_err(|e| BrokerError::MutexError(e.to_string()))?
             .is_allowed(&server_fingerprint, ipaddr);
-
         if !allow {
             drop(tls_stream);
             return Err(BrokerError::UnauthorizedFingerprint(server_fingerprint));

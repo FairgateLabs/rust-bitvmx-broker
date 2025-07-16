@@ -1,22 +1,41 @@
+use crate::{
+    allow_list::AllowList,
+    rpc::{client::Client, tls_helper::Cert, BrokerConfig, Message, StorageApi},
+};
 use std::sync::{Arc, Mutex};
-
-use crate::rpc::{client::Client, BrokerConfig, Message, StorageApi};
 
 //#[derive(Clone)]
 pub struct DualChannel {
     client: Client,
-    my_id: String, // Public key hash
+    my_id: String,   // Public key hash
+    dest_id: String, // Public key hash of the destination
 }
 
 impl DualChannel {
-    pub fn new(config: &BrokerConfig) -> Result<Self, crate::rpc::errors::BrokerError> {
-        let client = Client::new(config)?;
-        let my_id = config.get_cert().get_pubk_hash()?;
-        Ok(Self { client, my_id })
+    // The config is of the node you want to connect to
+    pub fn new(
+        config: &BrokerConfig,
+        my_cert: Cert,
+        allow_list: Arc<Mutex<AllowList>>,
+    ) -> Result<Self, crate::rpc::errors::BrokerError> {
+        let client = Client::new(config, my_cert.clone(), allow_list)?;
+        let my_id = my_cert.get_pubk_hash()?;
+        let dest_id = config.get_pubk_hash();
+        Ok(Self {
+            client,
+            my_id,
+            dest_id,
+        })
     }
 
-    pub fn send(&self, dest: String, msg: String) -> Result<bool, crate::rpc::errors::BrokerError> {
-        self.client.send_msg(self.my_id.clone(), dest, msg)
+    // If dest is None, it will use the dest_id from the config
+    pub fn send(
+        &self,
+        dest: Option<String>,
+        msg: String,
+    ) -> Result<bool, crate::rpc::errors::BrokerError> {
+        let dest_id = dest.unwrap_or_else(|| self.dest_id.to_string());
+        self.client.send_msg(self.my_id.clone(), dest_id, msg)
     }
 
     pub fn recv(&self) -> Result<Option<(String, String)>, crate::rpc::errors::BrokerError> {

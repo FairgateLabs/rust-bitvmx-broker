@@ -1,15 +1,6 @@
-use std::{
-    net::IpAddr,
-    sync::{Arc, Mutex},
-};
-
+use crate::rpc::errors::BrokerError;
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    allow_list::AllowList,
-    rpc::{errors::BrokerError, tls_helper::Cert},
-};
-
+use std::net::IpAddr;
 pub mod client;
 pub mod errors;
 pub mod server;
@@ -34,37 +25,20 @@ pub(crate) trait Broker {
 pub struct BrokerConfig {
     port: u16,
     ip: Option<IpAddr>,
-    cert: Cert,
-    allow_list: Arc<Mutex<AllowList>>,
+    pubk_hash: String,
 }
 
 impl BrokerConfig {
-    pub fn new(
-        port: u16,
-        ip: Option<IpAddr>,
-        cert: Cert,
-        allow_list: Arc<Mutex<AllowList>>,
-    ) -> Result<Self, BrokerError> {
+    pub fn new(port: u16, ip: Option<IpAddr>, pubk_hash: String) -> Result<Self, BrokerError> {
         Ok(Self {
             port,
             ip,
-            cert,
-            allow_list,
+            pubk_hash,
         })
     }
 
-    // /// ⚠️ Test-only helper.
-    // /// Loads certs from `certs/` folder using provided `name`.
-    pub fn _get_local_cert_files(name: &str) -> Cert {
-        Cert::from_file("./certs", name).unwrap()
-    }
-    pub fn _get_allow_list_from_file() -> Result<Arc<Mutex<AllowList>>, BrokerError> {
-        let allow_list = "allowlist.yaml".to_string();
-        let allow_list = AllowList::from_file(allow_list)?;
-        Ok(allow_list)
-    }
-    pub fn get_cert(&self) -> Cert {
-        self.cert.clone()
+    pub fn get_pubk_hash(&self) -> String {
+        self.pubk_hash.clone()
     }
 }
 

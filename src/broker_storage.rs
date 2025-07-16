@@ -26,7 +26,7 @@ fn format_uid(uid: u64) -> String {
 }
 
 impl StorageApi for BrokerStorage {
-    fn get(&mut self, dest: u32) -> Option<Message> {
+    fn get(&mut self, dest: String) -> Option<Message> {
         let mut keys = self
             .storage
             .lock()
@@ -41,13 +41,13 @@ impl StorageApi for BrokerStorage {
         if let Some(msg) = self.storage.lock().unwrap().get(key).unwrap_or(None) {
             let parts: Vec<&str> = key.split('_').collect();
             let uid = parts[3].parse::<u64>().unwrap();
-            let from = parts[4].parse::<u32>().unwrap();
+            let from = parts[4].parse::<String>().unwrap();
             return Some(Message { uid, from, msg });
         }
         None
     }
 
-    fn remove(&mut self, dest: u32, uid: u64) -> bool {
+    fn remove(&mut self, dest: String, uid: u64) -> bool {
         let keys = self
             .storage
             .lock()
@@ -64,7 +64,7 @@ impl StorageApi for BrokerStorage {
         true
     }
 
-    fn insert(&mut self, from: u32, dest: u32, msg: String) {
+    fn insert(&mut self, from: String, dest: String, msg: String) {
         let uid: u64 = self
             .storage
             .lock()
