@@ -1,6 +1,6 @@
 use super::errors::BrokerError;
 use crate::{
-    allow_list::AllowList,
+    allow_list::{AllowList, Identifier},
     rpc::{
         tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
         BrokerClient, BrokerConfig, Message,
@@ -98,7 +98,7 @@ impl Client {
             .allow_list
             .lock()
             .map_err(|e| BrokerError::MutexError(e.to_string()))?
-            .is_allowed(&server_fingerprint, ipaddr);
+            .is_allowed(&server_fingerprint, None, ipaddr); //TODO: select proper id
         if !allow {
             drop(tls_stream);
             return Err(BrokerError::UnauthorizedFingerprint(server_fingerprint));
@@ -120,7 +120,13 @@ impl Client {
             if let Some(client) = locked.as_ref().cloned() {
                 // Check if the client is still connected
                 let test = client
-                    .get(context::current(), "test-dest".to_string())
+                    .get(
+                        context::current(),
+                        Identifier {
+                            pubkey_hash: "test-dest".to_string(),
+                            id: 0,
+                        },
+                    )
                     .await;
                 if test.is_ok() {
                     return Ok(client);
@@ -143,33 +149,38 @@ impl Client {
 
     async fn async_send_msg(
         &self,
-        from: String,
-        dest: String,
+        from: Identifier,
+        dest: Identifier,
         msg: String,
     ) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.send(context::current(), from, dest, msg).await?)
     }
 
-    async fn async_get_msg(&self, dest: String) -> Result<Option<Message>, BrokerError> {
+    async fn async_get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.get(context::current(), dest).await?)
     }
 
-    async fn async_ack(&self, dest: String, uid: u64) -> Result<bool, BrokerError> {
+    async fn async_ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.ack(context::current(), dest, uid).await?)
     }
 
-    pub fn send_msg(&self, from: String, dest: String, msg: String) -> Result<bool, BrokerError> {
+    pub fn send_msg(
+        &self,
+        from: Identifier,
+        dest: Identifier,
+        msg: String,
+    ) -> Result<bool, BrokerError> {
         self.rt.block_on(self.async_send_msg(from, dest, msg))
     }
 
-    pub fn get_msg(&self, dest: String) -> Result<Option<Message>, BrokerError> {
+    pub fn get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
         self.rt.block_on(self.async_get_msg(dest))
     }
 
-    pub fn ack(&self, dest: String, uid: u64) -> Result<bool, BrokerError> {
+    pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
         self.rt.block_on(self.async_ack(dest, uid))
     }
 }

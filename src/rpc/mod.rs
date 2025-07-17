@@ -1,4 +1,4 @@
-use crate::rpc::errors::BrokerError;
+use crate::{allow_list::Identifier, rpc::errors::BrokerError};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 pub mod client;
@@ -10,15 +10,15 @@ pub mod tls_helper;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
     pub uid: u64,
-    pub from: String, // Public key hash
+    pub from: Identifier, // Public key hash
     pub msg: String,
 }
 
 #[tarpc::service]
 pub(crate) trait Broker {
-    async fn send(from: String, dest: String, msg: String) -> bool;
-    async fn get(dest: String) -> Option<Message>;
-    async fn ack(dest: String, uid: u64) -> bool;
+    async fn send(from: Identifier, dest: Identifier, msg: String) -> bool;
+    async fn get(dest: Identifier) -> Option<Message>;
+    async fn ack(dest: Identifier, uid: u64) -> bool;
 }
 
 #[derive(Clone)]
@@ -26,24 +26,35 @@ pub struct BrokerConfig {
     port: u16,
     ip: Option<IpAddr>,
     pubk_hash: String,
+    id: u8,
 }
 
 impl BrokerConfig {
-    pub fn new(port: u16, ip: Option<IpAddr>, pubk_hash: String) -> Result<Self, BrokerError> {
+    pub fn new(
+        port: u16,
+        ip: Option<IpAddr>,
+        pubk_hash: String,
+        id: Option<u8>,
+    ) -> Result<Self, BrokerError> {
         Ok(Self {
             port,
             ip,
             pubk_hash,
+            id: id.unwrap_or(0), // Default to 0 if not provided
         })
     }
 
     pub fn get_pubk_hash(&self) -> String {
         self.pubk_hash.clone()
     }
+
+    pub fn get_id(&self) -> u8 {
+        self.id
+    }
 }
 
 pub trait StorageApi {
-    fn get(&mut self, dest: String) -> Option<Message>;
-    fn insert(&mut self, from: String, dest: String, msg: String);
-    fn remove(&mut self, dest: String, uid: u64) -> bool;
+    fn get(&mut self, dest: Identifier) -> Option<Message>;
+    fn insert(&mut self, from: Identifier, dest: Identifier, msg: String);
+    fn remove(&mut self, dest: Identifier, uid: u64) -> bool;
 }

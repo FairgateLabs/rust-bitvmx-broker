@@ -6,6 +6,7 @@
 // Then we sort the keys get the oldest message (as uid is incremental).
 // To get the info for the message, we split the key and get the from and uid field.
 
+use crate::allow_list::Identifier;
 use crate::rpc::{Message, StorageApi};
 use std::sync::{Arc, Mutex};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -26,7 +27,7 @@ fn format_uid(uid: u64) -> String {
 }
 
 impl StorageApi for BrokerStorage {
-    fn get(&mut self, dest: String) -> Option<Message> {
+    fn get(&mut self, dest: Identifier) -> Option<Message> {
         let mut keys = self
             .storage
             .lock()
@@ -41,13 +42,13 @@ impl StorageApi for BrokerStorage {
         if let Some(msg) = self.storage.lock().unwrap().get(key).unwrap_or(None) {
             let parts: Vec<&str> = key.split('_').collect();
             let uid = parts[3].parse::<u64>().unwrap();
-            let from = parts[4].parse::<String>().unwrap();
+            let from = parts[4].parse::<Identifier>().unwrap();
             return Some(Message { uid, from, msg });
         }
         None
     }
 
-    fn remove(&mut self, dest: String, uid: u64) -> bool {
+    fn remove(&mut self, dest: Identifier, uid: u64) -> bool {
         let keys = self
             .storage
             .lock()
@@ -64,7 +65,7 @@ impl StorageApi for BrokerStorage {
         true
     }
 
-    fn insert(&mut self, from: String, dest: String, msg: String) {
+    fn insert(&mut self, from: Identifier, dest: Identifier, msg: String) {
         let uid: u64 = self
             .storage
             .lock()

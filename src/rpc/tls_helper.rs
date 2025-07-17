@@ -152,6 +152,12 @@ pub fn get_fingerprint_hex(cert: &CertificateDer<'_>) -> Result<String, anyhow::
     Ok(hex::encode(fingerprint.as_ref()))
 }
 
+pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, anyhow::Error> {
+    let cert = Cert::new_with_privk(privk)?;
+    let fingerprint = cert.get_pubk_hash()?;
+    Ok(fingerprint)
+}
+
 impl ServerCertVerifier for ArcAllowList {
     fn verify_server_cert(
         &self,
@@ -161,7 +167,7 @@ impl ServerCertVerifier for ArcAllowList {
         _ocsp: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        //TODO: use server_name to get ip address to check against allow list
+        //TODO: use server_name to get ip address to check against allow list, that is in server_name
         let fingerprint_hex = get_fingerprint_hex(cert)
             .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {:?}", e)))?;
         let is_allowed = {

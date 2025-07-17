@@ -28,4 +28,7 @@ pub enum BrokerError {
 
     #[error("Mutex error: {0}")]
     MutexError(String),
+
+    #[error("Invalid identifier: {0}")]
+    InvalidIdentifier(String),
 }

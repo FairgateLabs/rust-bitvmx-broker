@@ -1,5 +1,5 @@
 use bitvmx_broker::{
-    allow_list::AllowList,
+    allow_list::{AllowList, Identifier},
     rpc::{client::Client, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
@@ -35,11 +35,11 @@ struct Flags {
 
     /// Sets the id to send the message from.
     #[clap(long)]
-    from: Option<String>,
+    from: Option<Identifier>,
 
     /// Sets the id to send the message to.
     #[clap(long)]
-    dest: String,
+    dest: Identifier,
 
     /// Message to send.
     #[clap(long)]
@@ -58,6 +58,7 @@ fn main() -> anyhow::Result<()> {
             flags.port,
             Some(flags.ip_addr),
             cert.get_pubk_hash().unwrap(),
+            None,
         )
         .unwrap(),
         cert,

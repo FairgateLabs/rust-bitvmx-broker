@@ -1,6 +1,6 @@
 use super::{BrokerConfig, Message, StorageApi};
 use crate::{
-    allow_list::AllowList,
+    allow_list::{AllowList, Identifier},
     rpc::{
         tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
         Broker,
@@ -46,16 +46,22 @@ impl<S> Broker for BrokerServer<S>
 where
     S: StorageApi + 'static + Send + Sync,
 {
-    async fn send(self, _: context::Context, from: String, dest: String, msg: String) -> bool {
+    async fn send(
+        self,
+        _: context::Context,
+        from: Identifier,
+        dest: Identifier,
+        msg: String,
+    ) -> bool {
         self.storage.lock().unwrap().insert(from, dest, msg);
         true
     }
 
-    async fn get(self, _: context::Context, dest: String) -> Option<Message> {
+    async fn get(self, _: context::Context, dest: Identifier) -> Option<Message> {
         self.storage.lock().unwrap().get(dest)
     }
 
-    async fn ack(self, _: context::Context, dest: String, uid: u64) -> bool {
+    async fn ack(self, _: context::Context, dest: Identifier, uid: u64) -> bool {
         self.storage.lock().unwrap().remove(dest, uid)
     }
 }
@@ -150,7 +156,7 @@ where
                                 }
                             };
                             let allow = match allowlist.lock() {
-                                Ok(guard) => guard.is_allowed(&hex_fingerprint, ipaddr),
+                                Ok(guard) => guard.is_allowed(&hex_fingerprint, None, ipaddr), //TODO: select proper id
                                 Err(e) => {
                                     error!("Failed to lock allowlist: {:?}", e);
                                     return;
