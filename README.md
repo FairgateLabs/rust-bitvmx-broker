@@ -2,6 +2,11 @@
 
 Rust BitVMX Broker is a message broker implemented in Rust. It provides a way to send and receive messages between clients using a synchronous server (`sync_server`), a client (`Client`), and a dual-channel (`DualChannel`) for communication.
 
+## ⚠️ Disclaimer
+
+This library is currently under development and may not be fully stable.
+It is not production-ready, has not been audited, and future updates may introduce breaking changes without preserving backward compatibility.
+
 ## Features
 
 - Synchronous server for handling message requests.
