@@ -1,6 +1,7 @@
 use super::{BrokerConfig, Message, StorageApi};
 use crate::{
     allow_list::{AllowList, Identifier},
+    routing::RoutingTable,
     rpc::{
         tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
         Broker,
@@ -22,22 +23,24 @@ use tarpc::{
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_rustls::TlsAcceptor;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Clone)]
 struct BrokerServer<S: StorageApi> {
     _peer: SocketAddr,
     storage: Arc<Mutex<S>>,
+    routing: Arc<Mutex<RoutingTable>>,
 }
 
 impl<S> BrokerServer<S>
 where
     S: StorageApi,
 {
-    fn new(peer: SocketAddr, storage: Arc<Mutex<S>>) -> Self {
+    fn new(peer: SocketAddr, storage: Arc<Mutex<S>>, routing: Arc<Mutex<RoutingTable>>) -> Self {
         Self {
             _peer: peer,
             storage,
+            routing,
         }
     }
 }
@@ -53,6 +56,16 @@ where
         dest: Identifier,
         msg: String,
     ) -> bool {
+        let allowed = {
+            let routing = self.routing.lock().unwrap();
+            routing.can_route(&from, &dest)
+        };
+
+        if !allowed {
+            warn!("Routing denied: {} cannot send to {}", from, dest);
+            return false;
+        }
+
         self.storage.lock().unwrap().insert(from, dest, msg);
         true
     }
@@ -77,6 +90,7 @@ pub async fn run<S>(
     config: BrokerConfig,
     cert: Cert,
     allow_list: Arc<Mutex<AllowList>>,
+    routing: Arc<Mutex<RoutingTable>>,
 ) -> anyhow::Result<()>
 where
     S: 'static + Send + Sync + StorageApi + Clone,
@@ -118,6 +132,7 @@ where
                 let acceptor = tls_acceptor.clone();
                 let storage = storage.clone();
                 let allowlist = allow_list.clone();
+                let routing = routing.clone();
 
                 // Spawn a new task for each connection
                 tokio::spawn(async move {
@@ -156,7 +171,7 @@ where
                                 }
                             };
                             let allow = match allowlist.lock() {
-                                Ok(guard) => guard.is_allowed(&hex_fingerprint, None, ipaddr), //TODO: select proper id
+                                Ok(guard) => guard.is_allowed_no_id(&hex_fingerprint, ipaddr), //TODO: not checking id here???
                                 Err(e) => {
                                     error!("Failed to lock allowlist: {:?}", e);
                                     return;
@@ -181,7 +196,7 @@ where
                 let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
                 let transport = serde_transport::new(framed, Json::default());
                 server::BaseChannel::with_defaults(transport)
-                    .execute(BrokerServer::new(addr, storage).serve())
+                    .execute(BrokerServer::new(addr, storage, routing).serve())
                     .for_each(spawn)
                     .await;
                 });

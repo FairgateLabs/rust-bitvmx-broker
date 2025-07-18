@@ -167,7 +167,6 @@ impl ServerCertVerifier for ArcAllowList {
         _ocsp: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        //TODO: use server_name to get ip address to check against allow list, that is in server_name
         let fingerprint_hex = get_fingerprint_hex(cert)
             .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {:?}", e)))?;
         let is_allowed = {

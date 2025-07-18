@@ -1,5 +1,5 @@
 use super::{server::run, BrokerConfig, StorageApi};
-use crate::{allow_list::AllowList, rpc::tls_helper::Cert};
+use crate::{allow_list::AllowList, routing::RoutingTable, rpc::tls_helper::Cert};
 use std::sync::{Arc, Mutex};
 use tokio::{runtime::Runtime, sync::mpsc};
 
@@ -14,6 +14,7 @@ impl BrokerSync {
         storage: Arc<Mutex<S>>,
         cert: Cert,
         allow_list: Arc<Mutex<AllowList>>,
+        routing: Arc<Mutex<RoutingTable>>,
     ) -> Self
     where
         S: 'static + Send + Sync + StorageApi + Clone,
@@ -28,6 +29,7 @@ impl BrokerSync {
             config.clone(),
             cert.clone(),
             allow_list.clone(),
+            routing.clone(),
         ));
 
         Self { rt, shutdown_tx }

@@ -1,4 +1,4 @@
-use bitvmx_broker::{allow_list::Identifier, rpc::tls_helper::Cert};
+use bitvmx_broker::{allow_list::Identifier, routing::RoutingTable, rpc::tls_helper::Cert};
 use std::{
     fs::{self},
     net::{IpAddr, Ipv4Addr},
@@ -27,6 +27,7 @@ fn prepare_server(
     port: u16,
     privk_der: &str,
     allow_list: Arc<Mutex<AllowList>>,
+    routing: Arc<Mutex<RoutingTable>>,
 ) -> (BrokerSync, LocalChannel<MemStorage>) {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
     let server_cert = Cert::new_with_privk(privk_der).unwrap();
@@ -42,6 +43,7 @@ fn prepare_server(
         storage.clone(),
         server_cert,
         allow_list.clone(),
+        routing,
     );
     let local = LocalChannel::new(
         Identifier {
@@ -170,6 +172,15 @@ fn create_allow_list(identifiers: Vec<Identifier>) -> Arc<Mutex<AllowList>> {
     }
     allow_list
 }
+fn route_all() -> Arc<Mutex<RoutingTable>> {
+    let routing = RoutingTable::new();
+    {
+        let mut routing = routing.lock().unwrap();
+        routing.allow_all();
+    }
+    routing
+}
+
 fn get_keys() -> (KeyPair, KeyPair, KeyPair) {
     let privk1 = "308204be020100300d06092a864886f70d0101010500048204a8308204a40201000282010100a757eeb2bc74fed438885e29060ae22d8c3ae9542fcac76e798fb4ce500a345ad260cf85072046a15b8e7c84c60514a1abb9c3d66e3c5121aaf3a1e4c2ba1e70da3ad26f2e8eb34ed6c6110c1ad6942a7f3e911f5b5fa7491698d3a97808aae28ba272116a42b25ffabe79510ab508a878d38e5246cd5a25172a5071fc4113039c266c1d6df17486548e78bc235c8f8a6316ffef15a04f0909ad55538f902a6b7b182f33307998e917d9a19808c203c53247c5600bd2ebb323e8758413df610d33290d7a6358886a3a115aeecbe2d899bb39a787bbc007cd08a786ac8efa1ff1bc5b8cfe699f89699abacff34eba15df504ad7099e4001b4e754e3c2904358c102030100010282010031cfe6e9a5575e1365d091d6bc49b911bdd03b6c27ddc0878dffccde2ccd1cd07c16fd2ea7f45f91e0630585b03c0aec24e5e2f98d4ebf07ba8f52fd7949558e5a2770445023821451b21b98f2d434be81a9ea20df5e15b997d45e0cf002047bf2fca3dfb335af4b0aa470104393a7c41e533ae61ad53da414c52fb4fe559086e24a0ed9fdfc38d2932c0079bf45e53999020a6227e2fb482208a69ba972f8b5866cb3e96923d10c20575f6de854b8705e59c66d4f21cd92171de980c7731bba12edf8f2e3e66c7d86d92bf408e95a3b93975f1f56a7245f83c3b338c0ccb864e59aea8cebef73f2dc8191cf7b798dc6bed4fcd3e8316b70e619efaf3b3b3bd102818100ebdafe144dc671cbf4c99c4e0c5caec184d905b10066165e18b39709da16f764208926667699cdcff5671beac9cd3ce1cf20d2ef84c01cc3d0cdb7853059c8387ab6d21dbc91dc9b569e24062fe6ade43a6639003ff0b01ff876acacc7f7cde243106a37058a1a11e431589a91786acdcfd27705093c103366fb6df0c8dd674702818100b5a2eaf6d9036537abbe182465375ad5625e0ec397493139c0b9ccedcbbf6783745aeeaf0e006a0ae42592ad82f34c0b595c5209c81f2fe33e1ba05af22b1ce22d075c78fc51d205c023f7e73bb2a344f01f093cec36b5ea5f0b04c60964260d30c0c44bf3899983e79c552937c1f0c5da99ebe53b3ce6b6f8413d0230a9d3b702818100ae778561c1929d1531537de32233e135d7aeae0e1bec68795cae6478ee31f4f8c5348f0a568b397aaede8201311c380015b7033218b1ffd53dfd1ed75047e9db15b36d447ffc2a03629482b36cf5a8065ec8c53b9110db481b04b680ed3f3ab637c3c9be3fc3c3bb1e60fe590068e220b2adce4b1464b0db453f9238fe6d00fb0281807399828d2444c2f0917f648215610b906f1089b8f5da01584e4e721c8de5fd8d6e4a494a6450e32c97534a6cdfc0d48f0c8a73340287c6c48bccad5bf47077eb82d9028385a2d5560f9954b77809135c56ae8a049a199fe1d027851c3cf1de3ddadf748f1a2a62e7ce4a72f0cea9c2014a45581b067e961fb114642db6a6ff3502818100e297059b5a7347256c4ba42c7e8c6b309c039fb31a3c880a10922e15b7ed4f809331182ea0a086b83c4de6205e64ea8ac6029f5c0193a9ff136463c9c611c1369c90b0e958aca41d3e1a432cd76a64055e300b6b82cf084065b9351b45c10955791447bf578f2e60544d5d50187f903deaeea1e86e6c8c8c04151b5f5eaade52";
     let privk2 = "308204bc020100300d06092a864886f70d0101010500048204a6308204a20201000282010100b6ae502944279e82b34c4beb10f67dba10cd25fae819210acc8ed4e3d4a814e5aee3b00c688ebe843b47f766427e8c66dcb1136128b5a8ea44f16116cf8cc84cbb55f2f0c59b0ec1a1ce99b2bcd9f32743a1e24dcc43c6182c43d3584b0a357ed716d19d2a1b18d5028d11f301ae0615a5e1dceaa309985353d31f1421f9767b7fe811f2138af51d9034619585561d6384fc58998af1d75ce7b7b54f814973823b9f79e9889bd7cf3c6d7ef05b722bdf7b54f69d38123f4f7425b49681b996738374ee680a8ae445393ca20c1818fb89be340716ff9d6c15d0aff5e16d1f11f0bd8df540b8ed5c340c4e636ce642ee10aeb8e0059f7c16cfca024ed3970272e3020301000102820100451805faadabfc807bb742499cc756034f828038779bb58b23966c3fe5b952fa125d4cc34cb29cad5fcc96eea6fcbd36d486e7090b00366cb0f9c8da7b52c899790b8790f8746eaedef7c8db3921881d942f80ec22f38953b03e510be689ec74d67e6b76b1abc10723e95e5e16870f07161028e1d81b737124d5c7bdf221abe5637b043d7fbe753db1314056ef65c072ad36f256347eed583548dea9c6acaec60d4241c3b68c4eb5ff9395753765ffa5e1f6b059730934915d54f8c1526f91b8583acf42908bd55980bfde2d692515eb0ca311fe36e3a1e2dc0a52714a708531a48bfd52050c679cb62a784fbc35ccbf91cbdd624acc8ce6b95160dd3f17226102818100dca5d1aa43ad9871ad3775c4452e698d68191bad9734675c7bd4e8ee9c1ff1c05d1d3927fec729c3868784c59f816acbb355e5041af8465df0aa708253cea1fbfb4b11d0f4436f8c2eae5782bb0285911d65ac8588845e96f36344ea68359f504aff170960329d7a0e95a0c35541f53fbb4163456e8d8dc610ac149ea2131f0302818100d3f33b1dd06ee417cd69ef8f2d17ddcdd80155262bebf9e597fac7aed9d93577fbde150c93ad98cb0ceb5f854e1e224f376c0f4f1f168447af3ca328971b7fc4dc98c447a5cf8296ed72c3610e5d3ddd36647a25cc9d0f4451264ee81620075b02e4872f10a86563d5764e765b1a4bcd23bea231489ec43e8db219fa4ba0a6a102818001b1881d6d6d8ca8fab25d46075de6d37e040b5156c2c1345582f9d2b3020fc1f13503364a5f4ef3c039940c4c401b08bb34a2905880a5519d4241a0ce71dc8e698c56f3aa9c45e3e68bd2021fdb52191e07a4be55a0e674f42343e924a99cb26a10f1255246b12cb9a5ee58f17393254d13a0666d05cb1bc50efd0d86a2ecef028180244a100421cceac6dc87d7d986da00431f49d31f6f03bf4cbd41d5f0ad221092939049c05684b1958a87be5a1faeef26eb115869aea3f75022c3da17b80fa047bf917481e3f4eca214d3c27a1ab082481ee90334f79ca8a184d76f4933889659d1dbf8fd68f7bc2c64bf15de13e923b362fc5fdeda553cba8d1e426e6586832102818016df4e6d5dca014855917b6e9e7fcd82cf8e766c89ca1ade85205bd7ef465545367ec9139ff828a35076eadfd25a0f81cb31f44fa02bb2c6d21e2bf80fab52ca0a8f46b0864f0c2be5233a7d5c8911e0cb5ea51415be4da46235a08762d579b252b7a96470758257d320afa6d12eb8708108b49c4cf5140e94800a855c48ec44";
@@ -205,7 +216,8 @@ fn test_channel() {
         client1.get_identifier(),
         client2.get_identifier(),
     ]);
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
     user1
@@ -214,7 +226,6 @@ fn test_channel() {
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
-    allow_list.lock().unwrap().generate_yaml("allow").unwrap();
     broker_server.close();
     cleanup_storage(port);
 }
@@ -229,7 +240,8 @@ fn test_ack() {
         client1.get_identifier(),
         client2.get_identifier(),
     ]);
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
@@ -278,7 +290,8 @@ fn test_reconnect() {
         client1.get_identifier(),
         client2.get_identifier(),
     ]);
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
@@ -312,7 +325,8 @@ fn test_reconnect() {
         .is_none());
     broker_server.close();
 
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     myclient
         .send_msg(
             client1.get_identifier(),
@@ -337,7 +351,8 @@ fn test_stress_channel() {
         client1.get_identifier(),
         client2.get_identifier(),
     ]);
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
@@ -383,7 +398,8 @@ fn test_local_channel() {
         client1.get_identifier(),
         client2.get_identifier(),
     ]);
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
@@ -403,7 +419,8 @@ fn test_dinamic_allow_list() {
     cleanup_storage(port);
     let (server, client1, client2) = get_keys();
     let allow_list = create_allow_list(vec![server.get_identifier(), client1.get_identifier()]);
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
@@ -432,7 +449,6 @@ fn test_dinamic_allow_list() {
 // Test with the same public key hash but different IDs
 #[test]
 fn test_local_service_id() {
-    init_tracing().unwrap();
     let port = 10006;
     cleanup_storage(port);
     let (server, client1, client2, client3) = get_keys_dif_id();
@@ -442,7 +458,8 @@ fn test_local_service_id() {
         client2.get_identifier(),
         client3.get_identifier(),
     ]);
-    let (mut broker_server, _) = prepare_server(port, &server.privk, allow_list.clone());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let user1 = prepare_client_with_id(
         port,
         &server.get_pkh(),
@@ -460,10 +477,134 @@ fn test_local_service_id() {
     user1
         .send(Some(client2.get_identifier()), "Hello!".to_string())
         .unwrap();
-    allow_list.lock().unwrap().generate_yaml("allow").unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
+
+    broker_server.close();
+    cleanup_storage(port);
+}
+
+#[test]
+fn test_routing() {
+    let port = 10007;
+    cleanup_storage(port);
+    let (server, client1, client2) = get_keys();
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+    let routing = RoutingTable::new();
+    routing
+        .lock()
+        .unwrap()
+        .add_route(client2.get_identifier(), client1.get_identifier());
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+
+    // An error should occur because the routing table does not have a route for client1 to client2
+    user1
+        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .unwrap();
+    assert!(user2.recv().unwrap().is_none());
+
+    // Now we add a route from client1 to client2, so the message should be delivered
+    routing
+        .lock()
+        .unwrap()
+        .add_route(client1.get_identifier(), client2.get_identifier());
+    user1
+        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .unwrap();
+    let msg = user2.recv().unwrap().unwrap();
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, client1.get_identifier());
+
+    broker_server.close();
+    cleanup_storage(port);
+}
+
+#[test]
+fn test_integration() {
+    let port = 10008;
+    cleanup_storage(port);
+    let (server, client1, client2, client3) = get_keys_dif_id();
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+        client3.get_identifier(),
+    ]);
+    let routing = RoutingTable::new();
+    routing.lock().unwrap().add_routes(
+        client1.get_identifier(),
+        vec![client2.get_identifier(), client3.get_identifier()],
+    );
+    routing.lock().unwrap().add_routes(
+        client2.get_identifier(),
+        vec![client1.get_identifier(), client3.get_identifier()],
+    );
+    routing
+        .lock()
+        .unwrap()
+        .add_route(client3.get_identifier(), client1.get_identifier());
+    // Not client3 to client2, so it should not be able to send messages to client2
+
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
+    let user1 = prepare_client_with_id(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        Some(client1.id),
+        allow_list.clone(),
+    );
+    let user2 = prepare_client_with_id(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        Some(client2.id),
+        allow_list.clone(),
+    );
+    let user3 = prepare_client_with_id(
+        port,
+        &server.get_pkh(),
+        &client3.privk,
+        Some(client3.id),
+        allow_list.clone(),
+    );
+
+    // user1 and user2 should be able to communicate
+    user1
+        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .unwrap();
+    let msg = user2.recv().unwrap().unwrap();
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, client1.get_identifier());
+
+    // user3 and user1 should be able to communicate
+    user3
+        .send(
+            Some(client1.get_identifier()),
+            "Hello from client3!".to_string(),
+        )
+        .unwrap();
+    let msg = user1.recv().unwrap().unwrap();
+    assert_eq!(msg.0, "Hello from client3!");
+    assert_eq!(msg.1, client3.get_identifier());
+
+    // user3 should not be able to send messages to user2
+    user3
+        .send(
+            Some(client2.get_identifier()),
+            "Hello from client3!".to_string(),
+        )
+        .unwrap();
+    assert!(user2.recv().unwrap().is_none());
+
     broker_server.close();
     cleanup_storage(port);
 }

@@ -98,7 +98,8 @@ impl Client {
             .allow_list
             .lock()
             .map_err(|e| BrokerError::MutexError(e.to_string()))?
-            .is_allowed(&server_fingerprint, None, ipaddr); //TODO: select proper id
+            .is_allowed_no_id(&server_fingerprint, ipaddr); //TODO: not checking id here???
+
         if !allow {
             drop(tls_stream);
             return Err(BrokerError::UnauthorizedFingerprint(server_fingerprint));

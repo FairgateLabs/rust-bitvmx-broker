@@ -11,6 +11,7 @@ use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 use bitvmx_broker::{
     allow_list::AllowList,
+    routing::RoutingTable,
     rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
@@ -57,6 +58,8 @@ fn main() {
     let cert = Cert::new().unwrap();
     let allow_list =
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
+    let routing = RoutingTable::new();
+    routing.lock().unwrap().allow_all();
     let config = BrokerConfig::new(flags.port, None, cert.get_pubk_hash().unwrap(), None).unwrap();
 
     #[cfg(not(feature = "storagebackend"))]
@@ -72,7 +75,7 @@ fn main() {
         bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
     ));
 
-    let mut server = BrokerSync::new(&config, storage.clone(), cert, allow_list.clone());
+    let mut server = BrokerSync::new(&config, storage.clone(), cert, allow_list.clone(), routing);
 
     wait_ctrl();
     server.close();

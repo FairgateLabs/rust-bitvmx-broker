@@ -97,6 +97,14 @@ impl AllowList {
             None => false,
         }
     }
+    pub fn is_allowed_no_id(&self, pubk_hash: &str, addr: IpAddr) -> bool {
+        if self.allow_all {
+            return true;
+        }
+        self.allow_list
+            .iter()
+            .any(|(ident, stored_addr)| ident.pubkey_hash == pubk_hash && *stored_addr == addr)
+    }
     pub fn is_allowed_by_fingerprint(&self, pubk_hash: &str) -> bool {
         if self.allow_all {
             return true;
@@ -167,9 +175,8 @@ impl AllowList {
         Ok(())
     }
 
-    pub fn generate_yaml(&self, file_name: &str) -> Result<(), anyhow::Error> {
+    pub fn generate_yaml(&self, path: &str) -> Result<(), anyhow::Error> {
         let yaml = serde_yaml::to_string(&self.allow_list)?;
-        let path = format!("certs/{}.yaml", file_name);
         fs::write(path, yaml)?;
         info!("Allow list saved to allowlist.yaml");
         Ok(())
