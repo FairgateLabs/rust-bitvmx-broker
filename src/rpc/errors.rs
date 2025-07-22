@@ -31,4 +31,7 @@ pub enum BrokerError {
 
     #[error("Invalid identifier: {0}")]
     InvalidIdentifier(String),
+
+    #[error("Closed channel")]
+    ClosedChannel,
 }

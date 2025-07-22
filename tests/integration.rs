@@ -1,3 +1,4 @@
+use bitvmx_broker::rpc::sync_server::BrokerSync;
 use bitvmx_broker::{allow_list::Identifier, routing::RoutingTable, rpc::tls_helper::Cert};
 use std::{
     fs::{self},
@@ -13,10 +14,10 @@ use bitvmx_broker::broker_storage::BrokerStorage;
 use bitvmx_broker::{
     allow_list::AllowList,
     channel::channel::{DualChannel, LocalChannel},
-    rpc::{client::Client, errors::BrokerError, sync_server::BrokerSync, BrokerConfig},
+    rpc::{client::Client, errors::BrokerError, BrokerConfig},
 };
 #[cfg(feature = "storagebackend")]
-use storage_backend::storage::Storage;
+use storage_backend::{storage::Storage, storage_config::StorageConfig};
 use tarpc::client::RpcError;
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
@@ -60,11 +61,15 @@ fn prepare_server(
     port: u16,
     privk_der: &str,
     allow_list: Arc<Mutex<AllowList>>,
+    routing: Arc<Mutex<RoutingTable>>,
 ) -> (BrokerSync, LocalChannel<BrokerStorage>) {
-    let backend = Storage::new_with_path(&PathBuf::from(format!("storage_{}.db", port))).unwrap();
-    let storage = Arc::new(Mutex::new(
-        bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
-    ));
+    let storage_path = format!("storage_{}.db", port);
+    let config = StorageConfig::new(storage_path.clone(), None);
+    let broker_backend = Storage::new(&config)
+        .map_err(|e| BrokerError::StorageError(e.to_string()))
+        .unwrap();
+    let broker_backend = Arc::new(Mutex::new(broker_backend));
+    let storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
 
     let server_cert = Cert::new_with_privk(privk_der).unwrap();
     let server_config = BrokerConfig::new(
@@ -79,6 +84,7 @@ fn prepare_server(
         storage.clone(),
         server_cert,
         allow_list.clone(),
+        routing,
     );
     let local = LocalChannel::new(
         Identifier {
@@ -325,6 +331,7 @@ fn test_reconnect() {
         .is_none());
     broker_server.close();
 
+    // Reconnect
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
     myclient

@@ -7,6 +7,12 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+ 
+#[cfg(feature = "storagebackend")]
+use storage_backend::{storage::Storage, storage_config::StorageConfig};
+#[cfg(feature = "storagebackend")]
+broker_storage::BrokerStorage;
+
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 use bitvmx_broker::{
@@ -67,13 +73,13 @@ fn main() {
         bitvmx_broker::broker_memstorage::MemStorage::new(),
     ));
     #[cfg(feature = "storagebackend")]
-    let backend =
-        storage_backend::storage::Storage::new_with_path(&std::path::PathBuf::from("storage.db"))
-            .unwrap();
-    #[cfg(feature = "storagebackend")]
-    let storage = Arc::new(Mutex::new(
-        bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
-    ));
+    let storage = {
+        let storage_path = "storage.db";
+        let config = StorageConfig::new(storage_path.to_string(), None);
+        let broker_backend = Storage::new(&config).unwrap();
+        let broker_backend = Arc::new(Mutex::new(broker_backend));
+        Arc::new(Mutex::new(BrokerStorage::new(broker_backend)))
+    };
 
     let mut server = BrokerSync::new(&config, storage.clone(), cert, allow_list.clone(), routing);
 

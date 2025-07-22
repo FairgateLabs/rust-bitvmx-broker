@@ -10,7 +10,7 @@ pub mod tls_helper;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
     pub uid: u64,
-    pub from: Identifier, // Public key hash
+    pub from: Identifier,
     pub msg: String,
 }
 
@@ -19,6 +19,7 @@ pub(crate) trait Broker {
     async fn send(from: Identifier, dest: Identifier, msg: String) -> bool;
     async fn get(dest: Identifier) -> Option<Message>;
     async fn ack(dest: Identifier, uid: u64) -> bool;
+    async fn ping() -> bool;
 }
 
 #[derive(Clone)]

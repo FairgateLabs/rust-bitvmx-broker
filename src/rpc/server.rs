@@ -20,13 +20,16 @@ use tarpc::{
     server::{self, Channel},
     tokio_serde::formats::Json,
 };
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
 use tokio_rustls::TlsAcceptor;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::{
+    codec::{Framed, LengthDelimitedCodec},
+    sync::CancellationToken,
+};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
-struct BrokerServer<S: StorageApi> {
+pub struct BrokerServer<S: StorageApi> {
     _peer: SocketAddr,
     storage: Arc<Mutex<S>>,
     routing: Arc<Mutex<RoutingTable>>,
@@ -77,6 +80,10 @@ where
     async fn ack(self, _: context::Context, dest: Identifier, uid: u64) -> bool {
         self.storage.lock().unwrap().remove(dest, uid)
     }
+
+    async fn ping(self, _: context::Context) -> bool {
+        true
+    }
 }
 
 async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
@@ -116,6 +123,9 @@ where
         .with_single_cert(certs, key)?;
     let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
+    let cancellation_token = CancellationToken::new();
+    let mut connection_tasks: Vec<JoinHandle<()>> = Vec::new();
+
     tokio::select! {
         _ = async {
             loop {
@@ -133,77 +143,100 @@ where
                 let storage = storage.clone();
                 let allowlist = allow_list.clone();
                 let routing = routing.clone();
+                let cancel_token = cancellation_token.clone();
+
 
                 // Spawn a new task for each connection
-                tokio::spawn(async move {
+                let task = tokio::spawn(async move {
 
-                    // Perform TLS handshake
-                    let tls_stream = match acceptor.accept(stream).await {
-                        Ok(tls_stream) => {
+                    tokio::select! {
+                        _ = async{
 
-                            // Chreck if the client is authorized on the allowlist
-                            let peer_addr = match tls_stream.get_ref().0.peer_addr() {
-                                Ok(addr) => addr,
+                            // Perform TLS handshake
+                            let tls_stream = match acceptor.accept(stream).await {
+                                Ok(tls_stream) => {
+
+                                    // Chreck if the client is authorized on the allowlist
+                                    let peer_addr = match tls_stream.get_ref().0.peer_addr() {
+                                        Ok(addr) => addr,
+                                        Err(e) => {
+                                            error!("Failed to get peer address: {:?}", e);
+                                            return;
+                                        }
+                                    };
+                                    let ipaddr = match IpAddr::from_str(&peer_addr.ip().to_string()) {
+                                        Ok(ip) => ip,
+                                        Err(e) => {
+                                            error!("Invalid IP address format: {:?}", e);
+                                            return;
+                                        }
+                                    };
+                                    let cert = match tls_stream.get_ref().1.peer_certificates() {
+                                        Some(certs) if !certs.is_empty() => certs[0].clone(),
+                                        _ => {
+                                            error!("No peer certificate found");
+                                            return;
+                                        }
+                                    };
+                                    let hex_fingerprint = match get_fingerprint_hex(&cert) {
+                                        Ok(fingerprint) => fingerprint,
+                                        Err(e) => {
+                                            error!("Failed to get fingerprint: {:?}", e);
+                                            return;
+                                        }
+                                    };
+                                    let allow = match allowlist.lock() {
+                                        Ok(guard) => guard.is_allowed_no_id(&hex_fingerprint, ipaddr),
+                                        Err(e) => {
+                                            error!("Failed to lock allowlist: {:?}", e);
+                                            return;
+                                        }
+                                    };
+                                    match allow {
+                                        true => tls_stream,
+                                        false => {
+                                            error!("Unauthorized fingerprint with address {}: {}", peer_addr, hex_fingerprint);
+                                            return;
+                                        }
+                                    }
+                                },
                                 Err(e) => {
-                                    error!("Failed to get peer address: {:?}", e);
+                                    error!("TLS handshake failed: {:?}", e);
                                     return;
                                 }
                             };
-                            let ipaddr = match IpAddr::from_str(&peer_addr.ip().to_string()) {
-                                Ok(ip) => ip,
-                                Err(e) => {
-                                    error!("Invalid IP address format: {:?}", e);
-                                    return;
-                                }
-                            };
-                            let cert = match tls_stream.get_ref().1.peer_certificates() {
-                                Some(certs) if !certs.is_empty() => certs[0].clone(),
-                                _ => {
-                                    error!("No peer certificate found");
-                                    return;
-                                }
-                            };
-                            let hex_fingerprint = match get_fingerprint_hex(&cert) {
-                                Ok(fingerprint) => fingerprint,
-                                Err(e) => {
-                                    error!("Failed to get fingerprint: {:?}", e);
-                                    return;
-                                }
-                            };
-                            let allow = match allowlist.lock() {
-                                Ok(guard) => guard.is_allowed_no_id(&hex_fingerprint, ipaddr), //TODO: not checking id here???
-                                Err(e) => {
-                                    error!("Failed to lock allowlist: {:?}", e);
-                                    return;
-                                }
-                            };
-                            match allow {
-                                true => tls_stream,
-                                false => {
-                                    error!("Unauthorized fingerprint with address {}: {}", peer_addr, hex_fingerprint);
-                                    return;
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            error!("TLS handshake failed: {:?}", e);
-                            return;
+
+
+                            // Client is authorized
+                            let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
+                            let transport = serde_transport::new(framed, Json::default());
+                            server::BaseChannel::with_defaults(transport)
+                                .execute(BrokerServer::new(addr, storage, routing).serve())
+                                .for_each(spawn)
+                                .await;
+
+                        } => {},
+                        _ = cancel_token.cancelled() => {
+                            tracing::debug!("Cancelled connection handler for {}", addr);
                         }
-                    };
-
-
-                // Client is authorized
-                let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
-                let transport = serde_transport::new(framed, Json::default());
-                server::BaseChannel::with_defaults(transport)
-                    .execute(BrokerServer::new(addr, storage, routing).serve())
-                    .for_each(spawn)
-                    .await;
+                    }
                 });
+
+                connection_tasks.push(task);
             }
         } => {},
         _ = shutdown.recv() => {
             info!("Shutting down...");
+            cancellation_token.cancel();
+
+            // Wait for all connection tasks to complete
+            for task in connection_tasks {
+                if let Err(e) = task.await {
+                    error!("Task join error: {:?}", e);
+                }
+            }
+
+            info!("All connections closed.");
         },
     }
 

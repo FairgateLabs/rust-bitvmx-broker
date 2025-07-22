@@ -98,7 +98,7 @@ impl Client {
             .allow_list
             .lock()
             .map_err(|e| BrokerError::MutexError(e.to_string()))?
-            .is_allowed_no_id(&server_fingerprint, ipaddr); //TODO: not checking id here???
+            .is_allowed_no_id(&server_fingerprint, ipaddr);
 
         if !allow {
             drop(tls_stream);
@@ -119,21 +119,9 @@ impl Client {
             let mut locked = self.client.lock().await;
 
             if let Some(client) = locked.as_ref().cloned() {
-                // Check if the client is still connected
-                let test = client
-                    .get(
-                        context::current(),
-                        Identifier {
-                            pubkey_hash: "test-dest".to_string(),
-                            id: 0,
-                        },
-                    )
-                    .await;
-                if test.is_ok() {
+                if client.ping(context::current()).await.is_ok() {
                     return Ok(client);
                 }
-
-                // Client is broken
                 *locked = None;
             }
         }
@@ -185,3 +173,14 @@ impl Client {
         self.rt.block_on(self.async_ack(dest, uid))
     }
 }
+
+// impl Drop for Client {
+//     //TODO: remove
+//     fn drop(&mut self) {
+//         let client = self.client.clone();
+//         self.rt.block_on(async {
+//             let mut locked = client.lock().await;
+//             *locked = None; // Drop client, which drops transport
+//         });
+//     }
+// }
