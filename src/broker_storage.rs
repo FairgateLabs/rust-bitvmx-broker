@@ -6,7 +6,7 @@
 // Then we sort the keys get the oldest message (as uid is incremental).
 // To get the info for the message, we split the key and get the from and uid field.
 
-use crate::allow_list::Identifier;
+use crate::identification::identifier::Identifier;
 use crate::rpc::{Message, StorageApi};
 use std::sync::{Arc, Mutex};
 use storage_backend::storage::{KeyValueStore, Storage};
