@@ -1,6 +1,6 @@
 use super::errors::BrokerError;
 use crate::{
-    allow_list::{AllowList, Identifier},
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
         BrokerClient, BrokerConfig, Message,
@@ -98,7 +98,7 @@ impl Client {
             .allow_list
             .lock()
             .map_err(|e| BrokerError::MutexError(e.to_string()))?
-            .is_allowed_no_id(&server_fingerprint, ipaddr);
+            .is_allowed(&server_fingerprint, ipaddr);
 
         if !allow {
             drop(tls_stream);
@@ -173,14 +173,3 @@ impl Client {
         self.rt.block_on(self.async_ack(dest, uid))
     }
 }
-
-// impl Drop for Client {
-//     //TODO: remove
-//     fn drop(&mut self) {
-//         let client = self.client.clone();
-//         self.rt.block_on(async {
-//             let mut locked = client.lock().await;
-//             *locked = None; // Drop client, which drops transport
-//         });
-//     }
-// }

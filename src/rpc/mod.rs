@@ -1,4 +1,4 @@
-use crate::{allow_list::Identifier, rpc::errors::BrokerError};
+use crate::{identification::identifier::Identifier, rpc::errors::BrokerError};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 pub mod client;

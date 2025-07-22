@@ -1,7 +1,6 @@
 use super::{BrokerConfig, Message, StorageApi};
 use crate::{
-    allow_list::{AllowList, Identifier},
-    routing::RoutingTable,
+    identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
         tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
         Broker,
@@ -186,7 +185,7 @@ where
                                         }
                                     };
                                     let allow = match allowlist.lock() {
-                                        Ok(guard) => guard.is_allowed_no_id(&hex_fingerprint, ipaddr),
+                                        Ok(guard) => guard.is_allowed(&hex_fingerprint, ipaddr),
                                         Err(e) => {
                                             error!("Failed to lock allowlist: {:?}", e);
                                             return;

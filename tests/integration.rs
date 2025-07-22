@@ -1,27 +1,28 @@
-use bitvmx_broker::rpc::sync_server::BrokerSync;
-use bitvmx_broker::{allow_list::Identifier, routing::RoutingTable, rpc::tls_helper::Cert};
+use bitvmx_broker::{
+    channel::channel::{DualChannel, LocalChannel},
+    identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
+    rpc::{
+        client::Client, errors::BrokerError, sync_server::BrokerSync, tls_helper::Cert,
+        BrokerConfig,
+    },
+};
 use std::{
     fs::{self},
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+use tarpc::client::RpcError;
+use tracing_subscriber::{
+    fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
+};
 
 #[cfg(not(feature = "storagebackend"))]
 use bitvmx_broker::broker_memstorage::MemStorage;
 #[cfg(feature = "storagebackend")]
 use bitvmx_broker::broker_storage::BrokerStorage;
-use bitvmx_broker::{
-    allow_list::AllowList,
-    channel::channel::{DualChannel, LocalChannel},
-    rpc::{client::Client, errors::BrokerError, BrokerConfig},
-};
 #[cfg(feature = "storagebackend")]
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
-use tarpc::client::RpcError;
-use tracing_subscriber::{
-    fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
-};
 
 #[cfg(not(feature = "storagebackend"))]
 fn prepare_server(
@@ -49,7 +50,7 @@ fn prepare_server(
     let local = LocalChannel::new(
         Identifier {
             pubkey_hash: "local".to_string(),
-            id: 0,
+            id: Some(0),
         },
         storage,
     );
@@ -160,7 +161,7 @@ impl KeyPair {
     fn get_identifier(&self) -> Identifier {
         Identifier {
             pubkey_hash: self.pubk_hash.clone(),
-            id: self.id,
+            id: Some(self.id),
         }
     }
 }
@@ -173,7 +174,7 @@ fn create_allow_list(identifiers: Vec<Identifier>) -> Arc<Mutex<AllowList>> {
     {
         let mut allow_list = allow_list.lock().unwrap();
         for id in identifiers {
-            allow_list.add(id.pubkey_hash, Some(id.id), addr);
+            allow_list.add(id.pubkey_hash, addr);
         }
     }
     allow_list
@@ -440,7 +441,7 @@ fn test_dinamic_allow_list() {
     allow_list
         .lock()
         .unwrap()
-        .add(client2.get_pkh(), None, IpAddr::V4(Ipv4Addr::LOCALHOST));
+        .add(client2.get_pkh(), IpAddr::V4(Ipv4Addr::LOCALHOST));
     user1
         .send(Some(client2.get_identifier()), "Hello!".to_string())
         .unwrap();
@@ -507,6 +508,13 @@ fn test_routing() {
         .lock()
         .unwrap()
         .add_route(client2.get_identifier(), client1.get_identifier());
+    routing.lock().unwrap().add_route(
+        client2.get_identifier(),
+        Identifier {
+            pubkey_hash: client1.get_pkh(),
+            id: None,
+        },
+    ); // Wildcard
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
@@ -530,6 +538,15 @@ fn test_routing() {
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
 
+    routing
+        .lock()
+        .unwrap()
+        .save_to_file("routing.yaml")
+        .unwrap();
+    let new_route = RoutingTable::load_from_file("routing.yaml").unwrap();
+    std::fs::remove_file("routing.yaml").unwrap();
+    assert_eq!(*new_route.lock().unwrap(), *routing.lock().unwrap());
+
     broker_server.close();
     cleanup_storage(port);
 }
@@ -546,9 +563,12 @@ fn test_integration() {
         client3.get_identifier(),
     ]);
     let routing = RoutingTable::new();
-    routing.lock().unwrap().add_routes(
+    routing.lock().unwrap().add_route(
         client1.get_identifier(),
-        vec![client2.get_identifier(), client3.get_identifier()],
+        Identifier {
+            pubkey_hash: client3.get_pkh(),
+            id: None,
+        }, // Wildcard (client2 and client3 have the same pubkey_hash)
     );
     routing.lock().unwrap().add_routes(
         client2.get_identifier(),

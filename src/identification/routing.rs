@@ -1,4 +1,4 @@
-use crate::allow_list::Identifier;
+use crate::identification::identifier::Identifier;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::{
@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct RoutingTable {
     routes: HashMap<Identifier, HashSet<Identifier>>, // Map from source Identifier to a set of allowed destination Identifiers
     allow_all: bool,                                  // If true, all Identifiers are allowed
@@ -109,13 +109,20 @@ impl RoutingTable {
 
     /// Check if `from` is allowed to talk to `to`
     pub fn can_route(&self, from: &Identifier, to: &Identifier) -> bool {
+        //TODO: test
         if self.allow_all {
-            true
-        } else {
-            self.routes
-                .get(from)
-                .map_or(false, |dests| dests.contains(to))
+            return true;
         }
+
+        self.routes.iter().any(|(from_rule, to_set)| {
+            Self::id_match(from_rule, from)
+                && to_set.iter().any(|to_rule| Self::id_match(to_rule, to))
+        })
+    }
+
+    /// Match `rule` identifier against `actual`, considering `None` (wildcard)
+    fn id_match(rule: &Identifier, actual: &Identifier) -> bool {
+        rule.pubkey_hash == actual.pubkey_hash && (rule.id.is_none() || rule.id == actual.id)
     }
 
     pub fn allow_all(&mut self) {

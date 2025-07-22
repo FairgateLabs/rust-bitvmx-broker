@@ -1,4 +1,4 @@
-use crate::allow_list::AllowList;
+use crate::identification::allow_list::AllowList;
 use pem::Pem;
 use rcgen::{Certificate, CertificateParams, KeyPair};
 use ring::digest::{digest, SHA256};

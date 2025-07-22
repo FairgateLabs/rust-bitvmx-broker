@@ -1,5 +1,5 @@
 use crate::{
-    allow_list::{AllowList, Identifier},
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{client::Client, tls_helper::Cert, BrokerConfig, Message, StorageApi},
 };
 use std::sync::{Arc, Mutex};
@@ -22,11 +22,11 @@ impl DualChannel {
         let client = Client::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
-            id: id.unwrap_or(0), // Default to 0 if not provided
+            id: Some(id.unwrap_or(0)), // Default to 0 if not provided
         };
         let dest_id = Identifier {
             pubkey_hash: config.get_pubk_hash(),
-            id: config.get_id(),
+            id: Some(config.get_id()),
         };
         Ok(Self {
             client,

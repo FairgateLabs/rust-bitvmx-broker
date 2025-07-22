@@ -1,5 +1,5 @@
 use bitvmx_broker::{
-    allow_list::{AllowList, Identifier},
+    identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{client::Client, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;

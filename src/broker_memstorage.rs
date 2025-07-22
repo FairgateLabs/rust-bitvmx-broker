@@ -1,5 +1,5 @@
 use crate::{
-    allow_list::Identifier,
+    identification::identifier::Identifier,
     rpc::{Message, StorageApi},
 };
 use std::collections::{HashMap, VecDeque};

@@ -7,17 +7,16 @@ use std::{
     thread::sleep,
     time::Duration,
 };
- 
+
+#[cfg(feature = "storagebackend")]
+use broker_storage::BrokerStorage;
 #[cfg(feature = "storagebackend")]
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
-#[cfg(feature = "storagebackend")]
-broker_storage::BrokerStorage;
 
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 use bitvmx_broker::{
-    allow_list::AllowList,
-    routing::RoutingTable,
+    identification::{allow_list::AllowList, routing::RoutingTable},
     rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
