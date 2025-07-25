@@ -32,7 +32,7 @@ impl Cert {
             spki_der,
         })
     }
-    /// privk is a hex string in DER format.
+    /// privk is a hex string in PEM format.
     pub fn new_with_privk(privk: &str) -> Result<Self, anyhow::Error> {
         let cert = Self::create_cert(Some(privk))?;
         let (key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
@@ -111,12 +111,12 @@ impl Cert {
         let hexsum = hex::encode(fingerprint);
         Ok(hexsum)
     }
+    //
     fn create_cert(privk: Option<&str>) -> Result<Certificate, anyhow::Error> {
         let mut params = CertificateParams::default();
 
         if let Some(privk_str) = privk {
-            let der_bytes = hex::decode(privk_str)?;
-            let keypair = KeyPair::from_der(&der_bytes)?;
+            let keypair = KeyPair::from_pem(privk_str)?;
             params.key_pair = Some(keypair);
             params.alg = &rcgen::PKCS_RSA_SHA256;
         }
