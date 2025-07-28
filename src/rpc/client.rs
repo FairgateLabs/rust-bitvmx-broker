@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     sync::Arc,
 };
 
@@ -29,7 +29,7 @@ impl Client {
     pub fn new(config: &BrokerConfig) -> Self {
         let rt = Runtime::new().unwrap();
         let address = SocketAddr::new(
-            config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            config.ip.unwrap_or(IpAddr::from([0, 0, 0, 0])),
             config.port,
         );
 
