@@ -1,7 +1,7 @@
 use crate::rpc::Broker;
 use futures::{future, prelude::*};
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
 };
 use tarpc::{
@@ -63,10 +63,7 @@ pub async fn run<S>(
 where
     S: 'static + Send + Sync + StorageApi + Clone,
 {
-    let server_addr = (
-        config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        config.port,
-    );
+    let server_addr = (config.ip.unwrap_or(IpAddr::from([0, 0, 0, 0])), config.port);
 
     let mut listener = tarpc::serde_transport::tcp::listen(&server_addr, Json::default).await?;
     tracing::info!("Listening on port {}", listener.local_addr().port());
