@@ -29,6 +29,10 @@ pub struct BrokerConfig {
 
 impl BrokerConfig {
     pub fn new(port: u16, ip: Option<IpAddr>) -> Self {
+        let mut ip = ip;
+        if ip.is_none() {
+            ip = Some(IpAddr::from([0, 0, 0, 0]));
+        }
         Self { port, ip }
     }
 }
