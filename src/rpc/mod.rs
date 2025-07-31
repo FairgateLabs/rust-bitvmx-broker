@@ -1,6 +1,6 @@
 use crate::{identification::identifier::Identifier, rpc::errors::BrokerError};
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub mod client;
 pub mod errors;
 pub mod server;
@@ -22,7 +22,7 @@ pub(crate) trait Broker {
     async fn ping() -> bool;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BrokerConfig {
     port: u16,
     ip: Option<IpAddr>,
@@ -51,6 +51,13 @@ impl BrokerConfig {
 
     pub fn get_id(&self) -> u8 {
         self.id
+    }
+
+    pub fn get_address(&self) -> SocketAddr {
+        SocketAddr::new(
+            self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            self.port,
+        )
     }
 }
 

@@ -61,7 +61,7 @@ impl RoutingTable {
             let from_str = from.to_string();
             let mut to_vec: Vec<String> = tos.iter().map(|to| to.to_string()).collect();
             to_vec.sort(); // For consistent ordering
-            let line = format!("{} --> {:?}", from_str, to_vec);
+            let line = format!("{from_str} --> {to_vec:?}");
             output.push(line);
         }
 
@@ -109,7 +109,6 @@ impl RoutingTable {
 
     /// Check if `from` is allowed to talk to `to`
     pub fn can_route(&self, from: &Identifier, to: &Identifier) -> bool {
-        //TODO: test
         if self.allow_all {
             return true;
         }

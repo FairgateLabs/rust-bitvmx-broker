@@ -2,7 +2,10 @@ use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{client::Client, tls_helper::Cert, BrokerConfig, Message, StorageApi},
 };
-use std::sync::{Arc, Mutex};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
 //#[derive(Clone)]
 pub struct DualChannel {
@@ -16,17 +19,20 @@ impl DualChannel {
     pub fn new(
         config: &BrokerConfig,
         my_cert: Cert,
-        id: Option<u8>,
+        my_id: Option<u8>,
+        my_address: SocketAddr,
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
         let client = Client::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
-            id: Some(id.unwrap_or(0)), // Default to 0 if not provided
+            id: Some(my_id.unwrap_or(0)), // Default to 0 if not provided
+            address: my_address,
         };
         let dest_id = Identifier {
             pubkey_hash: config.get_pubk_hash(),
             id: Some(config.get_id()),
+            address: config.get_address(),
         };
         Ok(Self {
             client,

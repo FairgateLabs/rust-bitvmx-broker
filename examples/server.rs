@@ -1,4 +1,5 @@
 use std::{
+    fs,
     net::{IpAddr, Ipv4Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -60,7 +61,8 @@ fn wait_ctrl() {
 fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
-    let cert = Cert::new().unwrap();
+    let privk = fs::read_to_string("certs/services.key").expect("Failed to read private key file");
+    let cert = Cert::new_with_privk(&privk).unwrap();
     let allow_list =
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
     let routing = RoutingTable::new();

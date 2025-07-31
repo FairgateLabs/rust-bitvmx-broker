@@ -43,9 +43,8 @@ impl Cert {
         })
     }
     pub fn from_file(path: &str, name: &str) -> Result<Self, anyhow::Error> {
-        let cert_path = format!("{}/{}.pem", path, name);
-        let key_path = format!("{}/{}.key", path, name);
-
+        let cert_path = format!("{path}/{name}.pem");
+        let key_path = format!("{path}/{name}.key");
         let cert_pem = std::fs::read_to_string(cert_path)?;
         let key_pem = std::fs::read_to_string(key_path)?;
 
@@ -144,7 +143,7 @@ impl ArcAllowList {
 pub fn get_fingerprint_hex(cert: &CertificateDer<'_>) -> Result<String, anyhow::Error> {
     // Parse cert
     let (_, parsed_cert) = parse_x509_certificate(cert.as_ref())
-        .map_err(|e| rustls::Error::General(format!("Cert parse error: {:?}", e)))?;
+        .map_err(|e| rustls::Error::General(format!("Cert parse error: {e:?}")))?;
     // Extract SPKI
     let spki = parsed_cert.tbs_certificate.subject_pki.raw;
     // Hash SPKI
@@ -168,21 +167,22 @@ impl ServerCertVerifier for ArcAllowList {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let fingerprint_hex = get_fingerprint_hex(cert)
-            .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {:?}", e)))?;
+            .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {e:?}")))?;
         let is_allowed = {
-            let guard = self.allow_list.lock().map_err(|e| {
-                rustls::Error::General(format!("Failed to lock allow list: {:?}", e))
-            })?;
+            let guard = self
+                .allow_list
+                .lock()
+                .map_err(|e| rustls::Error::General(format!("Failed to lock allow list: {e:?}")))?;
             guard.is_allowed_by_fingerprint(&fingerprint_hex)
         };
         if is_allowed {
-            info!("✅ Server authorized (fingerprint: {})", fingerprint_hex);
+            info!("✅ Server authorized (fingerprint: {fingerprint_hex})");
             Ok(ServerCertVerified::assertion())
         } else {
-            info!("❌ Unauthorized server (fingerprint: {})", fingerprint_hex);
+            info!("❌ Unauthorized server (fingerprint: {fingerprint_hex})");
             let err = io::Error::new(
                 io::ErrorKind::Other,
-                format!("Unauthorized fingerprint: {}", fingerprint_hex),
+                format!("Unauthorized fingerprint: {fingerprint_hex}"),
             );
             Err(RustlsError::InvalidCertificate(CertificateError::Other(
                 rustls::OtherError(Arc::new(err)),
@@ -231,21 +231,22 @@ impl ClientCertVerifier for ArcAllowList {
         _now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
         let fingerprint_hex = get_fingerprint_hex(cert)
-            .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {:?}", e)))?;
+            .map_err(|e| rustls::Error::General(format!("Failed to get fingerprint: {e:?}")))?;
         let is_allowed = {
-            let guard = self.allow_list.lock().map_err(|e| {
-                rustls::Error::General(format!("Failed to lock allow list: {:?}", e))
-            })?;
+            let guard = self
+                .allow_list
+                .lock()
+                .map_err(|e| rustls::Error::General(format!("Failed to lock allow list: {e:?}")))?;
             guard.is_allowed_by_fingerprint(&fingerprint_hex)
         };
         if is_allowed {
-            info!("✅ Client authorized (fingerprint: {})", fingerprint_hex);
+            info!("✅ Client authorized (fingerprint: {fingerprint_hex})");
             Ok(ClientCertVerified::assertion())
         } else {
-            info!("❌ Unauthorized client (fingerprint: {})", fingerprint_hex);
+            info!("❌ Unauthorized client (fingerprint: {fingerprint_hex})");
             let err = io::Error::new(
                 io::ErrorKind::Other,
-                format!("Unauthorized fingerprint: {}", fingerprint_hex),
+                format!("Unauthorized fingerprint: {fingerprint_hex}"),
             );
             Err(RustlsError::InvalidCertificate(CertificateError::Other(
                 rustls::OtherError(Arc::new(err)),

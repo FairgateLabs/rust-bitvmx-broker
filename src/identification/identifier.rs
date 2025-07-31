@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{net::SocketAddr, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,24 +7,26 @@ pub type PubkHash = String;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Identifier {
     pub pubkey_hash: PubkHash,
-    pub id: Option<u8>, // For internal services.
-                        //`None` represents a wildcard '*'
+    pub id: Option<u8>, // For internal services. `None` represents a wildcard '*'
+    pub address: SocketAddr,
 }
 
-impl std::fmt::Display for Identifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.id {
-            Some(id) => write!(f, "{}:{}", self.pubkey_hash, id),
-            None => write!(f, "{}:*", self.pubkey_hash),
+impl Identifier {
+    pub fn new(pubkey_hash: PubkHash, id: u8, address: SocketAddr) -> Self {
+        Identifier {
+            pubkey_hash,
+            id: Some(id),
+            address,
         }
     }
 }
 
-impl From<(String, Option<u8>)> for Identifier {
-    fn from(tuple: (String, Option<u8>)) -> Self {
+impl From<(String, Option<u8>, SocketAddr)> for Identifier {
+    fn from(tuple: (String, Option<u8>, SocketAddr)) -> Self {
         Identifier {
             pubkey_hash: tuple.0,
             id: tuple.1,
+            address: tuple.2,
         }
     }
 }
@@ -32,18 +34,41 @@ impl From<(String, Option<u8>)> for Identifier {
 impl FromStr for Identifier {
     type Err = String;
 
-    /// Parse format: "pubkey_hash:id" where `id` may be a number or '*'
+    /// Parse format: "pubkey_hash:id@address"
     fn from_str(s: &str) -> Result<Self, String> {
-        let parts: Vec<&str> = s.split(':').collect();
+        let parts: Vec<&str> = s.split('@').collect();
         if parts.len() != 2 {
-            return Err("Identifier must be in format 'name:id'".to_string());
+            return Err("Identifier must be in format 'pubkey_hash:id@address'".to_string());
         }
-        let pubkey_hash = parts[0].to_string();
-        let id = if parts[1] == "*" {
+
+        let id_parts: Vec<&str> = parts[0].split(':').collect();
+        if id_parts.len() != 2 {
+            return Err("Identifier must be in format 'pubkey_hash:id@address'".to_string());
+        }
+
+        let pubkey_hash = id_parts[0].to_string();
+        let id = if id_parts[1] == "*" {
             None
         } else {
-            Some(parts[1].parse::<u8>().map_err(|e| e.to_string())?)
+            Some(id_parts[1].parse::<u8>().map_err(|e| e.to_string())?)
         };
-        Ok(Identifier { pubkey_hash, id })
+
+        let address = parts[1].parse::<SocketAddr>().map_err(|e| e.to_string())?;
+
+        Ok(Identifier {
+            pubkey_hash,
+            id,
+            address,
+        })
+    }
+}
+
+impl std::fmt::Display for Identifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let id_str = match self.id {
+            Some(id) => id.to_string(),
+            None => "*".to_string(),
+        };
+        write!(f, "{}:{}@{}", self.pubkey_hash, id_str, self.address)
     }
 }
