@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +31,7 @@ impl BrokerConfig {
     pub fn new(port: u16, ip: Option<IpAddr>) -> Self {
         let mut ip = ip;
         if ip.is_none() {
-            ip = Some(IpAddr::from([0, 0, 0, 0]));
+            ip = Some(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
         }
         Self { port, ip }
     }
