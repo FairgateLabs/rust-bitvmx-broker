@@ -1,0 +1,85 @@
+version: '3.9'
+
+networks:
+  broker-network:
+    driver: bridge
+
+services:
+
+  msg-broker:
+    container_name: msg-broker
+    expose:
+      - 10000
+    networks:
+      - broker-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: broker:latest
+    command: ["cargo run --example broker_server"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./examples:/broker/examples
+      - ../rust-bitvmx-storage-backend:/rust-bitvmx-storage-backend
+      - ./target:/broker/target
+
+  user-1:
+    container_name: user-1
+    networks:
+      - broker-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: broker:latest
+    command: ["
+      cargo run -q --example user1_send &&
+      sleep 10 &&
+      cargo run -q --example user1_receive &&
+      echo 'keeping container alive for user tests' &&
+      sleep infinity
+      "]
+    volumes:
+      - ./examples:/broker/examples
+      - ../rust-bitvmx-storage-backend:/rust-bitvmx-storage-backend
+      - ./target:/broker/target
+      - ./Cargo.toml:/broker/Cargo.toml
+      - ./Cargo.lock:/broker/Cargo.lock
+    depends_on:
+      msg-broker:
+        condition: service_healthy
+
+  user-2:
+    container_name: user-2
+    networks:
+      - broker-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: broker:latest
+    command: ["
+      sleep 5 &&
+      cargo run -q --example user2_receive &&
+      cargo run -q --example user2_send &&
+      echo 'keeping container alive for user tests' &&
+      sleep infinity
+      "]
+    volumes:
+      - ./examples:/broker/examples
+      - ../rust-bitvmx-storage-backend:/rust-bitvmx-storage-backend
+      - ./target:/broker/target
+      - ./Cargo.toml:/broker/Cargo.toml
+      - ./Cargo.lock:/broker/Cargo.lock
+    depends_on:
+      msg-broker:
+        condition: service_healthy
