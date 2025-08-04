@@ -110,7 +110,7 @@ impl Cert {
         let hexsum = hex::encode(fingerprint);
         Ok(hexsum)
     }
-    //
+
     fn create_cert(privk: Option<&str>) -> Result<Certificate, anyhow::Error> {
         let mut params = CertificateParams::default();
 

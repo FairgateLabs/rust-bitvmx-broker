@@ -1,17 +1,22 @@
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
-    rpc::{client::Client, tls_helper::Cert, BrokerConfig, Message, StorageApi},
+    rpc::{
+        client::Client,
+        errors::{BrokerError, MutexExt},
+        tls_helper::Cert,
+        BrokerConfig, Message, StorageApi,
+    },
 };
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex},
 };
 
-//#[derive(Clone)]
+#[derive(Clone)]
 pub struct DualChannel {
     client: Client,
-    my_id: Identifier,   // Public key hash
-    dest_id: Identifier, // Public key hash of the destination
+    my_id: Identifier,
+    dest_id: Identifier, // Identifier of the destination
 }
 
 impl DualChannel {
@@ -41,6 +46,27 @@ impl DualChannel {
         })
     }
 
+    // Do not use in production, this is for testing purposes only
+    pub fn new_simple(
+        config: &BrokerConfig,
+        my_id: u8,
+        my_port: u16,
+    ) -> Result<(Self, Identifier), crate::rpc::errors::BrokerError> {
+        let my_cert = Cert::new()?;
+        let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), my_port);
+        let allow_list = AllowList::new();
+        allow_list.lock_or_err("allow_llist")?.allow_all();
+        let my_identifier = Identifier {
+            pubkey_hash: my_cert.get_pubk_hash()?,
+            id: Some(my_id),
+            address: my_address,
+        };
+        Ok((
+            Self::new(config, my_cert, Some(my_id), my_address, allow_list)?,
+            my_identifier,
+        ))
+    }
+
     // If dest is None, it will use the dest_id from the config
     pub fn send(
         &self,
@@ -48,7 +74,12 @@ impl DualChannel {
         msg: String,
     ) -> Result<bool, crate::rpc::errors::BrokerError> {
         let dest_id = dest.unwrap_or_else(|| self.dest_id.clone());
-        self.client.send_msg(self.my_id.clone(), dest_id, msg)
+        self.client.send_msg(
+            self.my_id.id.unwrap_or(0),
+            self.my_id.address.port(),
+            dest_id,
+            msg,
+        )
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, crate::rpc::errors::BrokerError> {
@@ -76,30 +107,22 @@ where
     /*  fn get(&mut self, dest: String) -> Option<Message>;
     fn insert(&mut self, from: String, dest: String, msg: String);
     fn remove(&mut self, dest: String, uid: u64) -> bool;*/
-    pub fn send(
-        &self,
-        dest: Identifier,
-        msg: String,
-    ) -> Result<bool, crate::rpc::errors::BrokerError> {
+    pub fn send(&self, dest: Identifier, msg: String) -> Result<bool, BrokerError> {
         self.storage
-            .lock()
-            .unwrap()
+            .lock_or_err("storage")?
             .insert(self.my_id.clone(), dest, msg);
         Ok(true)
     }
 
-    pub fn get(
-        &self,
-        dest: Identifier,
-    ) -> Result<Option<Message>, crate::rpc::errors::BrokerError> {
-        Ok(self.storage.lock().unwrap().get(dest))
+    pub fn get(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
+        Ok(self.storage.lock_or_err("storage")?.get(dest))
     }
 
-    pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, crate::rpc::errors::BrokerError> {
-        Ok(self.storage.lock().unwrap().remove(dest, uid))
+    pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
+        Ok(self.storage.lock_or_err("storage")?.remove(dest, uid))
     }
 
-    pub fn recv(&self) -> Result<Option<(String, Identifier)>, crate::rpc::errors::BrokerError> {
+    pub fn recv(&self) -> Result<Option<(String, Identifier)>, BrokerError> {
         if let Some(msg) = self.get(self.my_id.clone())? {
             self.ack(self.my_id.clone(), msg.uid)?;
             Ok(Some((msg.msg, msg.from)))

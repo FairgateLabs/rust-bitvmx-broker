@@ -1,4 +1,7 @@
-use crate::{identification::identifier::Identifier, rpc::errors::BrokerError};
+use crate::{
+    identification::identifier::Identifier,
+    rpc::{errors::BrokerError, tls_helper::Cert},
+};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub mod client;
@@ -16,7 +19,7 @@ pub struct Message {
 
 #[tarpc::service]
 pub(crate) trait Broker {
-    async fn send(from: Identifier, dest: Identifier, msg: String) -> bool;
+    async fn send(from_id: u8, from_port: u16, dest: Identifier, msg: String) -> bool;
     async fn get(dest: Identifier) -> Option<Message>;
     async fn ack(dest: Identifier, uid: u64) -> bool;
     async fn ping() -> bool;
@@ -45,12 +48,41 @@ impl BrokerConfig {
         })
     }
 
+    // Do not use in production, this is for testing purposes
+    pub fn new_only_address(
+        port: u16,
+        ip: Option<IpAddr>,
+    ) -> Result<(Self, Identifier), BrokerError> {
+        let id = 0; // Default to 0 if not provided
+        let cert = Cert::new()?;
+        let pubk_hash = cert.get_pubk_hash()?;
+
+        let identifier = Identifier {
+            pubkey_hash: pubk_hash.clone(),
+            id: Some(id),
+            address: SocketAddr::new(ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)), port),
+        };
+        Ok((
+            Self {
+                port,
+                ip,
+                pubk_hash,
+                id,
+            },
+            identifier,
+        ))
+    }
+
     pub fn get_pubk_hash(&self) -> String {
         self.pubk_hash.clone()
     }
 
     pub fn get_id(&self) -> u8 {
         self.id
+    }
+
+    pub fn get_port(&self) -> u16 {
+        self.port
     }
 
     pub fn get_address(&self) -> SocketAddr {

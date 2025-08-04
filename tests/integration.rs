@@ -281,7 +281,8 @@ fn test_ack() {
 
     myclient
         .send_msg(
-            client1.get_identifier(),
+            client1.id,
+            client2.port,
             client2.get_identifier(),
             "Hello!".to_string(),
         )
@@ -331,7 +332,8 @@ fn test_reconnect() {
 
     myclient
         .send_msg(
-            client1.get_identifier(),
+            client1.id,
+            client2.port,
             client2.get_identifier(),
             "Hello!".to_string(),
         )
@@ -350,7 +352,8 @@ fn test_reconnect() {
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
     myclient
         .send_msg(
-            client1.get_identifier(),
+            client1.id,
+            client2.port,
             client2.get_identifier(),
             "World!".to_string(),
         )
@@ -647,6 +650,30 @@ fn test_integration() {
         .unwrap();
     assert!(user2.recv().unwrap().is_none());
 
+    broker_server.close();
+    cleanup_storage(port);
+}
+
+#[test]
+fn test_simple_channel() {
+    let port = 10010;
+    cleanup_storage(port);
+    let (server, _, _) = get_keys(port);
+
+    let allow_list = AllowList::new();
+    allow_list.lock().unwrap().allow_all();
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+
+    let (server_config, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
+    let (user1, client1) = DualChannel::new_simple(&server_config, 0, port).unwrap();
+    let (server_config, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
+    let (user2, client2) = DualChannel::new_simple(&server_config, 0, port).unwrap();
+
+    user1.send(Some(client2), "Hello!".to_string()).unwrap();
+    let msg = user2.recv().unwrap().unwrap();
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, client1);
     broker_server.close();
     cleanup_storage(port);
 }

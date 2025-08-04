@@ -29,7 +29,8 @@ use tracing::{error, info, warn};
 
 #[derive(Clone)]
 pub struct BrokerServer<S: StorageApi> {
-    _peer: SocketAddr,
+    client_pubkey_hash: String,
+    client_address: SocketAddr,
     storage: Arc<Mutex<S>>,
     routing: Arc<Mutex<RoutingTable>>,
 }
@@ -38,9 +39,15 @@ impl<S> BrokerServer<S>
 where
     S: StorageApi,
 {
-    fn new(peer: SocketAddr, storage: Arc<Mutex<S>>, routing: Arc<Mutex<RoutingTable>>) -> Self {
+    fn new(
+        client_pubkey_hash: String,
+        client_address: SocketAddr,
+        storage: Arc<Mutex<S>>,
+        routing: Arc<Mutex<RoutingTable>>,
+    ) -> Self {
         Self {
-            _peer: peer,
+            client_pubkey_hash,
+            client_address,
             storage,
             routing,
         }
@@ -48,16 +55,24 @@ where
 }
 
 impl<S> Broker for BrokerServer<S>
+//TODO: add error handling
 where
     S: StorageApi + 'static + Send + Sync,
 {
     async fn send(
         self,
         _: context::Context,
-        from: Identifier,
+        from_id: u8,
+        from_port: u16,
         dest: Identifier,
         msg: String,
     ) -> bool {
+        let address = SocketAddr::new(self.client_address.ip(), from_port);
+        let from = Identifier {
+            pubkey_hash: self.client_pubkey_hash.clone(),
+            id: Some(from_id),
+            address,
+        };
         let allowed = {
             let routing = self.routing.lock().unwrap();
             routing.can_route(&from, &dest)
@@ -67,7 +82,6 @@ where
             warn!("Routing denied: {} cannot send to {}", from, dest);
             return false;
         }
-
         self.storage.lock().unwrap().insert(from, dest, msg);
         true
     }
@@ -144,13 +158,12 @@ where
                 let routing = routing.clone();
                 let cancel_token = cancellation_token.clone();
 
-
                 // Spawn a new task for each connection
                 let task = tokio::spawn(async move {
 
                     tokio::select! {
                         _ = async{
-
+                            let hex_fingerprint: String;
                             // Perform TLS handshake
                             let tls_stream = match acceptor.accept(stream).await {
                                 Ok(tls_stream) => {
@@ -177,7 +190,7 @@ where
                                             return;
                                         }
                                     };
-                                    let hex_fingerprint = match get_fingerprint_hex(&cert) {
+                                    hex_fingerprint = match get_fingerprint_hex(&cert) {
                                         Ok(fingerprint) => fingerprint,
                                         Err(e) => {
                                             error!("Failed to get fingerprint: {:?}", e);
@@ -210,7 +223,7 @@ where
                             let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
                             let transport = serde_transport::new(framed, Json::default());
                             server::BaseChannel::with_defaults(transport)
-                                .execute(BrokerServer::new(addr, storage, routing).serve())
+                                .execute(BrokerServer::new(hex_fingerprint, addr, storage, routing).serve())
                                 .for_each(spawn)
                                 .await;
 

@@ -2,6 +2,7 @@ use super::errors::BrokerError;
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
+        errors::MutexExt,
         tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
         BrokerClient, BrokerConfig, Message,
     },
@@ -26,18 +27,18 @@ pub struct Client {
     allow_list: Arc<ArcMutex<AllowList>>,
 }
 
-// impl Clone for Client {
-//     fn clone(&self) -> Self {
-//         let rt = Runtime::new().unwrap();
-//         Self {
-//             rt: rt,
-//             address: self.address,
-//             client: Arc::clone(&self.client),
-//             cert_files: self.cert_files.clone(),
-//             allow_list: self.allow_list,
-//         }
-//     }
-// }
+impl Clone for Client {
+    fn clone(&self) -> Self {
+        let rt = Runtime::new().unwrap();
+        Self {
+            rt,
+            address: self.address,
+            client: Arc::clone(&self.client),
+            cert: self.cert.clone(),
+            allow_list: self.allow_list.clone(),
+        }
+    }
+}
 
 impl Client {
     pub fn new(
@@ -96,8 +97,7 @@ impl Client {
         let ipaddr = IpAddr::from_str(&peer_addr.ip().to_string())?;
         let allow = self
             .allow_list
-            .lock()
-            .map_err(|e| BrokerError::MutexError(e.to_string()))?
+            .lock_or_err("allow_llist")?
             .is_allowed(&server_fingerprint, ipaddr);
 
         if !allow {
@@ -138,12 +138,15 @@ impl Client {
 
     async fn async_send_msg(
         &self,
-        from: Identifier,
+        from_id: u8,
+        from_port: u16,
         dest: Identifier,
         msg: String,
     ) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
-        Ok(client.send(context::current(), from, dest, msg).await?)
+        Ok(client
+            .send(context::current(), from_id, from_port, dest, msg)
+            .await?)
     }
 
     async fn async_get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
@@ -158,11 +161,13 @@ impl Client {
 
     pub fn send_msg(
         &self,
-        from: Identifier,
+        from_id: u8,
+        from_port: u16,
         dest: Identifier,
         msg: String,
     ) -> Result<bool, BrokerError> {
-        self.rt.block_on(self.async_send_msg(from, dest, msg))
+        self.rt
+            .block_on(self.async_send_msg(from_id, from_port, dest, msg))
     }
 
     pub fn get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
