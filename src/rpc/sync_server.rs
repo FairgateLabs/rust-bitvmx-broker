@@ -1,7 +1,7 @@
 use super::{server::run, BrokerConfig, StorageApi};
 use crate::{
     identification::{allow_list::AllowList, routing::RoutingTable},
-    rpc::tls_helper::Cert,
+    rpc::{errors::MutexExt, tls_helper::Cert},
 };
 use std::sync::{Arc, Mutex};
 use tokio::{runtime::Runtime, sync::mpsc};
@@ -25,6 +25,33 @@ impl BrokerSync {
         let rt = Runtime::new().unwrap();
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
+        rt.spawn(run(
+            shutdown_rx,
+            storage.clone(),
+            config.clone(),
+            cert.clone(),
+            allow_list.clone(),
+            routing.clone(),
+        ));
+
+        Self { rt, shutdown_tx }
+    }
+
+    // Do not use in production, this is for testing purposes only
+    pub fn new_simple<S>(config: &BrokerConfig, storage: Arc<Mutex<S>>, cert: Cert) -> Self
+    where
+        S: 'static + Send + Sync + StorageApi + Clone,
+    {
+        let rt = Runtime::new().unwrap();
+
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
+        let allow_list = AllowList::new();
+        allow_list.lock_or_err("allow_list").unwrap().allow_all();
+
+        let routing = RoutingTable::new();
+        routing.lock_or_err("routing").unwrap().allow_all();
 
         rt.spawn(run(
             shutdown_rx,

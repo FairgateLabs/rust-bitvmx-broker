@@ -19,6 +19,7 @@ use tokio_rustls::{rustls::ClientConfig, TlsConnector};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::info;
 
+#[derive(Debug)]
 pub struct Client {
     rt: Runtime,
     address: SocketAddr,

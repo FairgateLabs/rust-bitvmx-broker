@@ -105,12 +105,14 @@ fn prepare_client(
     server_port: u16,
     server_pubk_hash: &str,
     client_privk_pem: &str,
+    client_port: u16,
     allow_list: Arc<Mutex<AllowList>>,
 ) -> DualChannel {
     prepare_client_with_id(
         server_port,
         server_pubk_hash,
         client_privk_pem,
+        client_port,
         None,
         allow_list,
     )
@@ -120,6 +122,7 @@ fn prepare_client_with_id(
     server_port: u16,
     server_pubk_hash: &str,
     client_privk_pem: &str,
+    client_port: u16,
     id: Option<u8>,
     allow_list: Arc<Mutex<AllowList>>,
 ) -> DualChannel {
@@ -131,7 +134,7 @@ fn prepare_client_with_id(
         None,
     )
     .unwrap();
-    let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), server_port);
+    let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), client_port);
     let user = DualChannel::new(&server_config, client_cert, id, my_address, allow_list).unwrap();
     user
 }
@@ -174,8 +177,10 @@ impl KeyPair {
         }
     }
 }
-fn cleanup_storage(port: u16) {
-    let _ = fs::remove_dir_all(&PathBuf::from(format!("storage_{}.db", port)));
+fn cleanup_storage(start_port: u16, count: u16) {
+    for port in start_port..start_port + count {
+        let _ = fs::remove_dir_all(&PathBuf::from(format!("storage_{}.db", port)));
+    }
 }
 fn create_allow_list(identifiers: Vec<Identifier>) -> Arc<Mutex<AllowList>> {
     let allow_list = AllowList::new();
@@ -204,8 +209,20 @@ fn get_keys(port: u16) -> (KeyPair, KeyPair, KeyPair) {
 
     (
         KeyPair::new(privk1, port),
-        KeyPair::new(privk2, port),
-        KeyPair::new(privk3, port),
+        KeyPair::new(privk2, port + 1),
+        KeyPair::new(privk3, port + 2),
+    )
+}
+
+fn get_other_keys(port: u16) -> (KeyPair, KeyPair, KeyPair) {
+    let privk1 = " b'-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC+ccS2WYlbbPrL\nR+i6HqXtQ3Y1r9aAzDj0N2N7INYbQplsllFe28z8WU1ZZpiiBBsRtzFAtJjX5JBF\nz62phW/86zMwMDP36pLyIpSGcLWdATR/2tsmzOZfodxPgejGLhPBcZc613YRP4tW\niwzXBt1ZLwUcTGkz25j80qvbInhdTsTA6ebzlREjQOq0nan2g4SIc0dPe4nB8kxW\nzz7Ra/Bq8wwoMnNGpW8RxFpzJ/bsYy042/RPeXBt0fhErW3e68mEQkaXaqpZt2g0\nSsraPC8qUL1ZkWainH7tFk6QDfatE8hZ0QbYPYiP6KxCYkPjX7QMbPDm7Z2m7Dxp\nCtufwN5ZAgMBAAECggEABj1dg9j6qGFxdSQZwrFa3+N4NcmZVlZ6njvLWV8pzLJZ\nqwZgy6IZfQIjB+UV5qcKSQIOzc8s+9PcC0GC7900nl2Ja5CEv2By6JaL9byvIqIF\nuZOu3v5TJPp9aKh5uzaKxKmHWjDxiB6kHtWG+euaaH/jI7p4LvAIuu3fHhqqxWnO\n7DCuP4gBTT4Hkqjo81JgqkQSlYA9ch4qkGy8ttZFT/TK33gRYJdQEY0L80Rfhs9Z\nsBMnCYYXBjc8DCbVIdm8IEwuw1Re5wJrFqpElKn4AJsfAdM/zeD3Phb7sn4zPpdE\nGShvi9dh6BkukE7PFzTze5uQq+Vm/W5xkBCwKYWzNQKBgQD8selGNPUjsDZkpSQS\nFDwHXSsml8lZbxFPyGsjLuqyfC3xnlgKlx46zAIsLhqBfb1USGaQ/8pTUPJmgjD5\nSvznPI+cjkWFE2M4FXS2093nDP8OJ5u3xOdbT84flHze+BtfHfRAOCH3uDmYpFel\nsi2D3KEg7//12nzj06suC6TYVQKBgQDA720RYmfpuVe9+6BjEhP8intw6mLxLsVd\nadfi0Qh7VbxU1jjZ7YfmhqlK/qSgmUExvS6lXoMVzcSu5K/8M3+IeNcb832FcRdn\nGg3+dCqE9/U+atP1Id7aOfkD+eFNBjBz6c26wnPCvUP+51k6MU9vRzATJqNkwYEU\nvrbFyQ+B9QKBgQDSSBcQhndM2JGbFVW7+byugBith/hVhTjJxMVrRNqn5vCwtY0c\nWv8b/LL+IuuJwKIyJgG8PjAXPzBIn6Szf3SP1PTJWhd+E1Eo1aoHjq2FXWpOVCWg\nOqowcWvdGcsEHUFh2OJuIogZxeOgI3qQd4KqzYoEh9Pfuo7dZEJ6EdR+9QKBgFl3\nLQZgsXrqHUvVwPvvyCDVPoSPy623WIIGsLtW3y4CBcD5TYeQ4/H8A8jo6AIozth3\nt4ermfGkZ04KcajrYHoyPt2RPWWBma6PoGmcCJN8P9bfxsXnHOXo+BXl65nCAvnd\nMy8lOHTXOw6azP91GjapthtLUX1JVcf+39Y7c9t5AoGBAN2kFAVj8DqiMKQOqTf8\nJNoR5lZSt5hCQRjoBvqF/+PLwfL7QNHTv8VzaqF8jvAL0YJ8yC8fqxyhTgzCe7L6\nCsKMVsRp2jkVu1xQYkSrEvtx4LbmNt0+zXnO2SoqSMTPOkd1ru3pWN5OWgNzrt/M\nbkNbnY4Boet6PbtakbxX1gAj\n-----END PRIVATE KEY-----\n'";
+    let privk2 = " b'-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCx/RjVZkIOsX14\nN3LQP5A9twNwxJ6ADLZX44cQl8xbf5QAEIESWy+J+evaxZ+RF7llao+Vn+N2bVCQ\nqemxYkuAoyU6zLnlJ15Fn65s0chi1LmhQU21RSNImhMyAJ/NqKHTBpsUB+adpgXX\nC7kvmzDv+5gaNOiozDsasB51Dcwov8QG2UHUXDSrnsxN7BWjWmmaGSrppNPkYVAH\nyU5WTxg7YTnIeC2XMoQOUV2DmhDNjJP4FG9IUmNtG+lnVWjyOIEKDezzKOi0PZue\nJFgdpuU1TEieMdEEcZwVVVRetT4YJ/vgSM8aYwmFDFQ2ut/WdCQJrgSr6AldyXXX\nTtV/jOeBAgMBAAECggEAQFX1CQXqcLc1XCPmy2F+eOBTTQq1JCH0MzaaFqRYCObH\nj3JnxUPSnjQJTc3LTL3flMn81p+xr5f53CCeyTB3jCrshSGFPFCLoe0DNnBp11d/\nNcuOFCzGgTK4J4XUPZlrzQSBP69Pa8KcL8wcBxo4iTZPF4HyazlPT+lDSRpQppV3\nU07WQyC4CNTlnKDKIxuUebINH/MUxacmb0CQxw3/qSo+OgNuO2/X6met653h3A+k\nCuhdcIjeMfcees6SGOvFA9c/BdS8jM3oCghX+/0QP6B7UibbzKRzDKbM+Ed214rZ\nJycJE4cVVf/b1C8yqtv/wNQHknMKxHWgQ8sB9Ac5dQKBgQDtAkXlGQY2RxfSsnRM\nWfLK6vQF3qQtCS56fcLGfuiq7svL1y7Z78bvHMNGMp8xStufoazp6P/uiOM8Sw0B\nW0Mrdd+u9nnqC9yHDh5gtx/Rj2dYPJsiJApSBe889dPyK74tKWSxCJUEgTGxfL6h\nAW5MhhVhSjQ3xvZ0prfWs2MGWwKBgQDAQCa3XjQ10HcgqvigV1v5iHvcELeRrZAN\nQ9YCGgwmnFlZy8p215AzsP1HGbHsNYEcrw7kNouKYIRGbQ004RrE971us+y1LVcI\nIrLUi5gYQUlrl6cRDND7cLb71IKYm5fj+2SKtsy+8YjaNSjsBQ0phGX2FIZtnymq\npStq1O0IUwKBgQCjajTNEKMC26PmZ5reZgqMtNFKFse2MaV1Wa7pc+lyqjGkO5sX\nM0dD6N4PUaoHr6iceTojEb8dNg8PrGOsMsOufJidJ17J7CHCkQ6K+tiagjjsUuVX\n9eeTxHm+23SmflijBO5jThqJP5cG3I8HrlfhtXWaXjKA3tNhfO42v/sgDwKBgQCJ\n9f9Sm2GwNJcodEjTF53DJjRsKfrxqbG0MzgCbhrGInDkRaBXRD4ROjOnsELEFWk/\n4kg3cQUWGkkSGPPfPKLvMjFYnfmB0rWf+vaGHF7bGQ7NDRkw3RejOLG3ajsFtLJ9\nQkxWVvP7Gm1w2bEyHjXh00cwHm6RgCRwdvL/SSmITQKBgQDVPjUtAdnNeeM2vUB7\nVZSV2UB3OP93WlYcK0buIkurq7TIij9Jc4/o9hscDEYNJSNM1XZlyK9WO5jYVX81\nj8SsWON7G2SBTjZrrhcNgUzMp5iNZawUmGPZOBMPFnabcOnOE4mrKFgbaoIFhHjY\nI/5QSHVeDsrihZkZqzZ6qeMx2g==\n-----END PRIVATE KEY-----\n'";
+    let privk3 = " b'-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC1ghQFCdzD0rFd\nYWNMZM/R5QBsDWx0WmmOff/jXRwvJHiiL49sQQNukg9tyRZAG8Iyh52FclKhV38R\nxJYRANwU8ISqv3XZ1nUUhMWXX36s/ldONFFKAm4QsjmurIgiiqWZsSA18xwVzAOs\nZeUt9mabGogxQWsp7+chnIm9nkbyve9AHU2+5rSePDknT+/e8aKBOgnnkVQMK6NL\ndMZACGtyY7ZyQNbrCYXzwJ/Uw+hli+YAKKkZXcV8U794ifkhaMLP+9j9O/e4qJMh\n+Us9MrawZJ1IAhNPmYg+mpNNeqCyAozNkfI463QnyPTvVdAtZNnCSkwOH12FKnMi\nV6rJdZbhAgMBAAECggEADs5Xl7mgOpEbSsTA9uBaW4LUr/vAVxVw+uCoWQGlZOsS\ntBgxGOGMyB4+B/SZTg11n+2UGeijeOnMQcTJgQWS7lpYWB1aHbTyxAO4oop1qOLu\neECoSOM92zrOncMRL9Ajhg/+0qfMKLMFsbB2K3OoFwrpBSuS9E7PidxdGAyrOO3G\nRJFr0h5YTjwKRYsNRBMowvvwb/tT5s8lK+sxxq4y/6rixFcD7rBBV7Zu3G+TX2OL\nhZTnNdNct7QQuie4+qNspbedDPk0IPrKwgffBoEJ7fe2jAZv4vZM0TL4dE7O+EL1\nL6pO8SXrRI1loevcTSfTdrV/8fL9pF1csTbfSdK1iQKBgQDamog3viubhJ9GGoVt\nMTyYECr5Dq8SAzxJNARhLsYLyE5KMBRPt8oEiV1hsGsiVeZjprCmsWNi3eaBvthp\n+3kS+rIZAjHycBOjgY5jBm5XHZsF0VC36TmbVi1nM5MUBEp8KQtkynuYJCffOver\nXr4xO0qFMX20CvM9vCqtSfOVNwKBgQDUjv60Vj9vdYnFSme68Fgyd7q3yFOP/LjD\nMuiCF61d8mXBV3IkSAWPyHJxbzhQ4pbofB47jCcVwhzFhTBOxZHdLLdG5WHjFX2t\nBnsjSaGWTp1R8gAum2x7cQIde4gx1cFhouvyTk/Z+vpWACXqJVGtrGZp5KGufQpu\npLxu9IrApwKBgQDQ516HjqeTrhCbaNrbN3NFiiXW7q5lU0w4VIpe6NkAB4KxqPKw\nH93hqffgVDx9ioNp9bDZC6oDoDUZBm1AEr5oYcTy20MqAOrzlOqiPVIS1EsCKz6t\nEicoCBnJhuLl/RfFQWAPCOVFxj+IN4zZaufsmlGjqWEMPm6nL3vFMGejzwKBgQCN\nXt3Ai2x9cStEcIw1JQ1D46Xn/fC131vzV7SUcbL4vPM4eDSONOieDK8xCsvl4A6G\naaah7EFCk2wXYtISUg0FkWwEVyOXqP+BSMI1Yg96rKatjcrZNL4eC7dgbHzUyFpp\n2bYb3kH1tJsy/7430MJWREeJPmraZoe9twsssLBoGQKBgQCMbl5kHgEN1uNz60zb\n0zjaMn1jpxGWjQS2bUGVQPmtRJlTALMZSQIit/AXbspBpuXQpLAeWS0YTaoyb282\nRNeBt95Qawee31hQCTF2AbgrQHIvInq6h6D1tZqfkNz8XutEzSkmt7p/XL4X1SG6\nz2m+VDJ/3ZgsQM2IA6uI83hWKw==\n-----END PRIVATE KEY-----\n'";
+
+    (
+        KeyPair::new(privk1, port),
+        KeyPair::new(privk2, port + 1),
+        KeyPair::new(privk3, port + 2),
     )
 }
 
@@ -215,9 +232,9 @@ fn get_keys_dif_id(port: u16) -> (KeyPair, KeyPair, KeyPair, KeyPair) {
 
     (
         KeyPair::new(privk1, port),
-        KeyPair::new_with_id(privk2, 0, port),
-        KeyPair::new_with_id(privk2, 1, port),
-        KeyPair::new_with_id(privk2, 2, port),
+        KeyPair::new_with_id(privk2, 0, port + 1),
+        KeyPair::new_with_id(privk2, 1, port + 2),
+        KeyPair::new_with_id(privk2, 2, port + 3),
     )
 }
 
@@ -229,7 +246,7 @@ pub fn get_local_addr(port: u16) -> SocketAddr {
 fn test_channel() {
     init_tracing().unwrap();
     let port = 10000;
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![
         server.get_identifier(),
@@ -238,22 +255,34 @@ fn test_channel() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+    let user1 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        client1.port,
+        allow_list.clone(),
+    );
+    let user2 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        client2.port,
+        allow_list.clone(),
+    );
     user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
 }
 
 #[test]
 fn test_ack() {
-    let port = 10001;
-    cleanup_storage(port);
+    let port = 10003;
+    cleanup_storage(port, 3);
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![
         server.get_identifier(),
@@ -262,8 +291,20 @@ fn test_ack() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+    let _ = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        client1.port,
+        allow_list.clone(),
+    );
+    let _ = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        client2.port,
+        allow_list.clone(),
+    );
 
     let client_config1 = BrokerConfig::new(
         port,
@@ -298,13 +339,13 @@ fn test_ack() {
         .unwrap()
         .is_none());
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
 }
 
 #[test]
 fn test_reconnect() {
-    let port = 10002;
-    cleanup_storage(port);
+    let port = 10006;
+    cleanup_storage(port, 3);
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![
         server.get_identifier(),
@@ -313,8 +354,20 @@ fn test_reconnect() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+    let _ = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        client1.port,
+        allow_list.clone(),
+    );
+    let _ = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        client2.port,
+        allow_list.clone(),
+    );
 
     let client_config1 = BrokerConfig::new(
         port,
@@ -362,13 +415,13 @@ fn test_reconnect() {
     assert_eq!(msg.msg, "World!");
     myclient.ack(client2.get_identifier(), msg.uid).unwrap();
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
 }
 
 #[test]
 fn test_stress_channel() {
-    let port = 10003;
-    cleanup_storage(port);
+    let port = 10009;
+    cleanup_storage(port, 3);
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![
         server.get_identifier(),
@@ -377,12 +430,24 @@ fn test_stress_channel() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+    let user1 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        client1.port,
+        allow_list.clone(),
+    );
+    let user2 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        client2.port,
+        allow_list.clone(),
+    );
 
     for i in 0..1000 {
         println!("Sending: {}", i);
-        let send_ok = user1.send(Some(client2.get_identifier()), "Hello!".to_string());
+        let send_ok = user1.send(client2.get_identifier(), "Hello!".to_string());
         if send_ok.is_err() {
             println!("Error: {:?}", send_ok);
         }
@@ -409,47 +474,34 @@ fn test_stress_channel() {
         }
     }
     broker_server.close();
-    cleanup_storage(port);
-}
-
-#[test]
-fn test_local_channel() {
-    let port = 10004;
-    cleanup_storage(port);
-    let (server, client1, client2) = get_keys(port);
-    let allow_list = create_allow_list(vec![
-        server.get_identifier(),
-        client1.get_identifier(),
-        client2.get_identifier(),
-    ]);
-    let (mut broker_server, _) =
-        prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
-
-    user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
-        .unwrap();
-    let msg = user2.recv().unwrap().unwrap();
-    assert_eq!(msg.0, "Hello!");
-    assert_eq!(msg.1, client1.get_identifier());
-    broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
 }
 
 #[test]
 fn test_dinamic_allow_list() {
-    let port = 10005;
-    cleanup_storage(port);
+    let port = 10012;
+    cleanup_storage(port, 3);
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![server.get_identifier(), client1.get_identifier()]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+    let user1 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        client1.port,
+        allow_list.clone(),
+    );
+    let user2 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        client2.port,
+        allow_list.clone(),
+    );
 
     user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap_err();
     assert!(matches!(msg, BrokerError::RpcError(RpcError::Channel(_))));
@@ -459,7 +511,7 @@ fn test_dinamic_allow_list() {
         .unwrap()
         .add(client2.get_pkh(), IpAddr::V4(Ipv4Addr::LOCALHOST));
     user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
 
@@ -467,14 +519,14 @@ fn test_dinamic_allow_list() {
     assert_eq!(msg.1, client1.get_identifier());
 
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
 }
 
 // Test with the same public key hash but different IDs
 #[test]
 fn test_local_service_id() {
-    let port = 10006;
-    cleanup_storage(port);
+    let port = 10015;
+    cleanup_storage(port, 3);
     let (server, client1, client2, client3) = get_keys_dif_id(port);
     let allow_list = create_allow_list(vec![
         server.get_identifier(),
@@ -488,6 +540,7 @@ fn test_local_service_id() {
         port,
         &server.get_pkh(),
         &client1.privk,
+        client1.port,
         Some(client1.id),
         allow_list.clone(),
     );
@@ -495,24 +548,25 @@ fn test_local_service_id() {
         port,
         &server.get_pkh(),
         &client2.privk,
+        client2.port,
         Some(client2.id),
         allow_list.clone(),
     );
     user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
 
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
 }
 
 #[test]
 fn test_routing() {
-    let port = 10007;
-    cleanup_storage(port);
+    let port = 10018;
+    cleanup_storage(port, 3);
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![
         server.get_identifier(),
@@ -534,12 +588,24 @@ fn test_routing() {
     ); // Wildcard
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
-    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+    let user1 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        client1.port,
+        allow_list.clone(),
+    );
+    let user2 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        client2.port,
+        allow_list.clone(),
+    );
 
     // An error should occur because the routing table does not have a route for client1 to client2
     user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     assert!(user2.recv().unwrap().is_none());
 
@@ -549,7 +615,7 @@ fn test_routing() {
         .unwrap()
         .add_route(client1.get_identifier(), client2.get_identifier());
     user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -565,13 +631,13 @@ fn test_routing() {
     assert_eq!(*new_route.lock().unwrap(), *routing.lock().unwrap());
 
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
 }
 
 #[test]
 fn test_integration() {
-    let port = 10008;
-    cleanup_storage(port);
+    let port = 10021;
+    cleanup_storage(port, 4);
     let (server, client1, client2, client3) = get_keys_dif_id(port);
     let allow_list = create_allow_list(vec![
         server.get_identifier(),
@@ -604,6 +670,7 @@ fn test_integration() {
         port,
         &server.get_pkh(),
         &client1.privk,
+        client1.port,
         Some(client1.id),
         allow_list.clone(),
     );
@@ -611,6 +678,7 @@ fn test_integration() {
         port,
         &server.get_pkh(),
         &client2.privk,
+        client2.port,
         Some(client2.id),
         allow_list.clone(),
     );
@@ -618,13 +686,14 @@ fn test_integration() {
         port,
         &server.get_pkh(),
         &client3.privk,
+        client3.port,
         Some(client3.id),
         allow_list.clone(),
     );
 
     // user1 and user2 should be able to communicate
     user1
-        .send(Some(client2.get_identifier()), "Hello!".to_string())
+        .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -632,10 +701,7 @@ fn test_integration() {
 
     // user3 and user1 should be able to communicate
     user3
-        .send(
-            Some(client1.get_identifier()),
-            "Hello from client3!".to_string(),
-        )
+        .send(client1.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
     let msg = user1.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello from client3!");
@@ -643,21 +709,18 @@ fn test_integration() {
 
     // user3 should not be able to send messages to user2
     user3
-        .send(
-            Some(client2.get_identifier()),
-            "Hello from client3!".to_string(),
-        )
+        .send(client2.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
     assert!(user2.recv().unwrap().is_none());
 
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 4);
 }
 
 #[test]
 fn test_simple_channel() {
-    let port = 10010;
-    cleanup_storage(port);
+    let port = 10025;
+    cleanup_storage(port, 3);
     let (server, _, _) = get_keys(port);
 
     let allow_list = AllowList::new();
@@ -665,17 +728,114 @@ fn test_simple_channel() {
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
 
-    let (server_config, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
+    let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
     let (user1, client1) = DualChannel::new_simple(&server_config, 0, port).unwrap();
-    let (server_config, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
+    let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
     let (user2, client2) = DualChannel::new_simple(&server_config, 0, port).unwrap();
 
-    user1.send(Some(client2), "Hello!".to_string()).unwrap();
+    user1.send(client2, "Hello!".to_string()).unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1);
     broker_server.close();
-    cleanup_storage(port);
+    cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_multiple_servers() {
+    let port = 10028;
+    cleanup_storage(port, 6);
+
+    let (server, client11, client12) = get_keys(port);
+    let (server2, client21, client22) = get_other_keys(port + 3);
+    let allow_list = AllowList::new();
+    allow_list.lock().unwrap().allow_all();
+
+    let (mut broker_server1, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+    let (mut broker_server2, _) =
+        prepare_server(port + 3, &server2.privk, allow_list.clone(), route_all());
+
+    let user1 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client11.privk,
+        client11.port,
+        allow_list.clone(),
+    );
+    let user2 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client12.privk,
+        client12.port,
+        allow_list.clone(),
+    );
+    let user3 = prepare_client(
+        port + 3,
+        &server2.get_pkh(),
+        &client21.privk,
+        client21.port,
+        allow_list.clone(),
+    );
+    let user4 = prepare_client(
+        port + 3,
+        &server2.get_pkh(),
+        &client22.privk,
+        client22.port,
+        allow_list,
+    );
+    user1
+        .send(client12.get_identifier(), "Hello!".to_string())
+        .unwrap();
+    user3
+        .send(client22.get_identifier(), "Hello from server2!".to_string())
+        .unwrap();
+    let msg = user2.recv().unwrap().unwrap();
+    let msg2 = user4.recv().unwrap().unwrap();
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, client11.get_identifier());
+    assert_eq!(msg2.0, "Hello from server2!");
+    assert_eq!(msg2.1, client21.get_identifier());
+    broker_server1.close();
+    broker_server2.close();
+    cleanup_storage(port, 6);
+}
+
+#[test]
+fn test_local_channel() {
+    let port = 10034;
+    cleanup_storage(port, 3);
+    let (server, client1, client2) = get_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+    let (mut broker_server, local_channel) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+    let user1 = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client1.privk,
+        client1.port,
+        allow_list.clone(),
+    );
+
+    local_channel
+        .send(client1.get_identifier(), "Hello!".to_string())
+        .unwrap();
+    let msg = user1.recv().unwrap().unwrap();
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(
+        msg.1,
+        Identifier {
+            pubkey_hash: "local".to_string(),
+            id: Some(0),
+            address: get_local_addr(port),
+        }
+    );
+    broker_server.close();
+    cleanup_storage(port, 3);
 }
 
 pub fn init_tracing() -> anyhow::Result<()> {

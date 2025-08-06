@@ -7,6 +7,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{CertificateError, DistinguishedName, Error as RustlsError, SignatureScheme};
 use sha2::{Digest, Sha256};
+use std::sync::Once;
 use std::{
     io,
     sync::{Arc, Mutex},
@@ -42,6 +43,18 @@ impl Cert {
             spki_der,
         })
     }
+
+    pub fn from_key_file(key_path: &str) -> Result<Self, anyhow::Error> {
+        let key_pem = std::fs::read_to_string(key_path)?;
+        let cert = Self::create_cert(Some(&key_pem))?;
+        let (generated_key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
+        Ok(Self {
+            key_pem: generated_key_pem,
+            cert_pem,
+            spki_der,
+        })
+    }
+
     pub fn from_file(path: &str, name: &str) -> Result<Self, anyhow::Error> {
         let cert_path = format!("{path}/{name}.pem");
         let key_path = format!("{path}/{name}.key");
@@ -276,4 +289,12 @@ impl ClientCertVerifier for ArcAllowList {
             SignatureScheme::ED25519,
         ]
     }
+}
+
+static INIT_TLS: Once = Once::new();
+
+pub fn init_tls() {
+    INIT_TLS.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
 }

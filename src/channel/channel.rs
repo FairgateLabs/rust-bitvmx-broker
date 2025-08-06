@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DualChannel {
     client: Client,
     my_id: Identifier,
@@ -67,17 +67,25 @@ impl DualChannel {
         ))
     }
 
-    // If dest is None, it will use the dest_id from the config
     pub fn send(
         &self,
-        dest: Option<Identifier>,
+        dest: Identifier,
         msg: String,
     ) -> Result<bool, crate::rpc::errors::BrokerError> {
-        let dest_id = dest.unwrap_or_else(|| self.dest_id.clone());
         self.client.send_msg(
             self.my_id.id.unwrap_or(0),
             self.my_id.address.port(),
-            dest_id,
+            dest,
+            msg,
+        )
+    }
+
+    // Dest is the identifier in config
+    pub fn send_server(&self, msg: String) -> Result<bool, crate::rpc::errors::BrokerError> {
+        self.client.send_msg(
+            self.my_id.id.unwrap_or(0),
+            self.my_id.address.port(),
+            self.dest_id.clone(),
             msg,
         )
     }
@@ -103,6 +111,15 @@ where
 {
     pub fn new(my_id: Identifier, storage: Arc<Mutex<S>>) -> Self {
         Self { my_id, storage }
+    }
+
+    pub fn new_simple(pubk_hash: String, port: u16, storage: Arc<Mutex<S>>) -> Self {
+        let my_id = Identifier {
+            pubkey_hash: pubk_hash,
+            id: Some(0), // Default to 0 if not provided
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        };
+        Self::new(my_id, storage)
     }
     /*  fn get(&mut self, dest: String) -> Option<Message>;
     fn insert(&mut self, from: String, dest: String, msg: String);

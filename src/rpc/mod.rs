@@ -52,7 +52,7 @@ impl BrokerConfig {
     pub fn new_only_address(
         port: u16,
         ip: Option<IpAddr>,
-    ) -> Result<(Self, Identifier), BrokerError> {
+    ) -> Result<(Self, Identifier, Cert), BrokerError> {
         let id = 0; // Default to 0 if not provided
         let cert = Cert::new()?;
         let pubk_hash = cert.get_pubk_hash()?;
@@ -70,6 +70,7 @@ impl BrokerConfig {
                 id,
             },
             identifier,
+            cert,
         ))
     }
 

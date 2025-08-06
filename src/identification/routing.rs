@@ -25,6 +25,14 @@ impl RoutingTable {
     /// Load routing table from YAML file
     pub fn load_from_file(path: &str) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
         let content = fs::read_to_string(path)?;
+
+        if content == "allow_all" {
+            return Ok(Arc::new(Mutex::new(Self {
+                routes: HashMap::new(),
+                allow_all: true,
+            })));
+        }
+
         let lines: Vec<String> = serde_yaml::from_str(&content)?;
 
         let mut routes: HashMap<Identifier, HashSet<Identifier>> = HashMap::new();

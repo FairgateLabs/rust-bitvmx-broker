@@ -22,6 +22,12 @@ impl AllowList {
     }
     pub fn from_file(allow_list_path: &str) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
         let content = fs::read_to_string(allow_list_path)?;
+        if content == "allow_all" {
+            return Ok(Arc::new(Mutex::new(Self {
+                allow_list: HashMap::new(),
+                allow_all: true,
+            })));
+        }
         let allow_list: HashMap<PubkHash, IpAddr> = serde_yaml::from_str(&content)?;
         Ok(Arc::new(Mutex::new(Self {
             allow_list,

@@ -44,6 +44,6 @@ pub trait MutexExt<T> {
 impl<T> MutexExt<T> for Mutex<T> {
     fn lock_or_err(&self, context: &'static str) -> Result<MutexGuard<T>, BrokerError> {
         self.lock()
-            .map_err(|_| BrokerError::MutexError(format!("Mutex poisoned: {}", context)))
+            .map_err(|_| BrokerError::MutexError(format!("Mutex poisoned: {context}")))
     }
 }
