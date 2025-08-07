@@ -116,7 +116,9 @@ where
     S: 'static + Send + Sync + StorageApi + Clone,
 {
     let server_addr = (
-        config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        config
+            .ip
+            .unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
         config.port,
     );
     let listener = TcpListener::bind(server_addr).await?;
