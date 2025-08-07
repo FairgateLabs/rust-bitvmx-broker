@@ -35,6 +35,18 @@ pub enum BrokerError {
 
     #[error("Mutex error: {0}")]
     MutexError(String),
+
+    #[error("X509 parse error: {0}")]
+    X509ParseError(#[from] x509_parser::error::X509Error),
+
+    #[error("PEM parse error: {0}")]
+    PemParseError(#[from] pem::PemError),
+
+    #[error("Rcgen error: {0}")]
+    RcgenError(#[from] rcgen::Error),
+
+    #[error("Rustls error: {0}")]
+    RustlsError(#[from] rustls::Error),
 }
 
 pub trait MutexExt<T> {

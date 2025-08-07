@@ -1,4 +1,5 @@
 use crate::identification::allow_list::AllowList;
+use crate::rpc::errors::BrokerError;
 use pem::Pem;
 use rcgen::{Certificate, CertificateParams, KeyPair};
 use ring::digest::{digest, SHA256};
@@ -23,7 +24,7 @@ pub struct Cert {
 }
 
 impl Cert {
-    pub fn new() -> Result<Self, anyhow::Error> {
+    pub fn new() -> Result<Self, BrokerError> {
         let cert = Self::create_cert(None)?;
         let (key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
         info!("Created new certificate");
@@ -34,7 +35,7 @@ impl Cert {
         })
     }
     /// privk is a hex string in PEM format.
-    pub fn new_with_privk(privk: &str) -> Result<Self, anyhow::Error> {
+    pub fn new_with_privk(privk: &str) -> Result<Self, BrokerError> {
         let cert = Self::create_cert(Some(privk))?;
         let (key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
         Ok(Self {
@@ -44,7 +45,7 @@ impl Cert {
         })
     }
 
-    pub fn from_key_file(key_path: &str) -> Result<Self, anyhow::Error> {
+    pub fn from_key_file(key_path: &str) -> Result<Self, BrokerError> {
         let key_pem = std::fs::read_to_string(key_path)?;
         let cert = Self::create_cert(Some(&key_pem))?;
         let (generated_key_pem, cert_pem, spki_der) = Self::get_vars(&cert)?;
@@ -55,7 +56,7 @@ impl Cert {
         })
     }
 
-    pub fn from_file(path: &str, name: &str) -> Result<Self, anyhow::Error> {
+    pub fn from_file(path: &str, name: &str) -> Result<Self, BrokerError> {
         let cert_path = format!("{path}/{name}.pem");
         let key_path = format!("{path}/{name}.key");
         let cert_pem = std::fs::read_to_string(cert_path)?;
@@ -70,7 +71,8 @@ impl Cert {
             })?;
 
         let cert_der = first_cert_block.contents();
-        let (_, parsed) = parse_x509_certificate(cert_der)?;
+        let (_, parsed) =
+            parse_x509_certificate(cert_der).map_err(|e| BrokerError::X509ParseError(e.into()))?;
         let spki_der = parsed.tbs_certificate.subject_pki.raw.to_vec();
 
         Ok(Self {
@@ -80,12 +82,13 @@ impl Cert {
         })
     }
 
-    pub fn get_private_key(&self) -> Result<PrivateKeyDer<'static>, anyhow::Error> {
+    pub fn get_private_key(&self) -> Result<PrivateKeyDer<'static>, BrokerError> {
         let block = pem::parse(self.key_pem.clone())?;
-        let key = PrivateKeyDer::try_from(block.contents()).map_err(anyhow::Error::msg)?;
+        let key = PrivateKeyDer::try_from(block.contents())
+            .map_err(|e| anyhow::anyhow!("PrivateKeyDer conversion failed: {e}"))?;
         Ok(key.clone_key())
     }
-    pub fn get_cert(&self) -> Result<Vec<CertificateDer<'static>>, anyhow::Error> {
+    pub fn get_cert(&self) -> Result<Vec<CertificateDer<'static>>, BrokerError> {
         let blocks: Vec<Pem> = pem::parse_many(self.cert_pem.clone())?;
         let cert = blocks
             .into_iter()
@@ -103,28 +106,34 @@ impl Cert {
     //   BIT STRING (the RSAPublicKey)
     // }
     // This function extracts the SPKI bit string and computes its SHA256 hash.
-    pub fn _get_bitstring_pubk_hash(&self) -> Result<String, anyhow::Error> {
-        let (_, seq) = parse_der_sequence(&self.spki_der)?;
-        let mut iter = seq.as_sequence()?.iter();
+    pub fn _get_bitstring_pubk_hash(&self) -> Result<String, BrokerError> {
+        let (_, seq) = parse_der_sequence(&self.spki_der)
+            .map_err(|e| BrokerError::X509ParseError(e.into()))?;
+        let mut iter = seq
+            .as_sequence()
+            .map_err(|e| BrokerError::X509ParseError(e.into()))?
+            .iter();
         let _algorithm = iter
             .next()
             .ok_or_else(|| anyhow::anyhow!("Missing algorithm"))?;
         let subject_pubkey = iter
             .next()
             .ok_or_else(|| anyhow::anyhow!("Missing subjectPublicKey"))?;
-        let bitstring = subject_pubkey.as_bitstring()?;
+        let bitstring = subject_pubkey
+            .as_bitstring()
+            .map_err(|e| BrokerError::X509ParseError(e.into()))?;
         let fingerprint = Sha256::digest(bitstring);
         let hexsum = hex::encode(fingerprint);
         Ok(hexsum)
     }
-    pub fn get_pubk_hash(&self) -> Result<String, anyhow::Error> {
+    pub fn get_pubk_hash(&self) -> Result<String, BrokerError> {
         let _pubk_hexstring = hex::encode(&self.spki_der);
         let fingerprint = Sha256::digest(&self.spki_der);
         let hexsum = hex::encode(fingerprint);
         Ok(hexsum)
     }
 
-    fn create_cert(privk: Option<&str>) -> Result<Certificate, anyhow::Error> {
+    fn create_cert(privk: Option<&str>) -> Result<Certificate, BrokerError> {
         let mut params = CertificateParams::default();
 
         if let Some(privk_str) = privk {
@@ -135,7 +144,7 @@ impl Cert {
 
         Ok(Certificate::from_params(params)?)
     }
-    fn get_vars(cert: &Certificate) -> Result<(String, String, Vec<u8>), anyhow::Error> {
+    fn get_vars(cert: &Certificate) -> Result<(String, String, Vec<u8>), BrokerError> {
         let key_pem = cert.serialize_private_key_pem();
         let cert_pem = cert.serialize_pem()?;
         let spki_der = cert.get_key_pair().public_key_der();
@@ -153,7 +162,7 @@ impl ArcAllowList {
     }
 }
 
-pub fn get_fingerprint_hex(cert: &CertificateDer<'_>) -> Result<String, anyhow::Error> {
+pub fn get_fingerprint_hex(cert: &CertificateDer<'_>) -> Result<String, BrokerError> {
     // Parse cert
     let (_, parsed_cert) = parse_x509_certificate(cert.as_ref())
         .map_err(|e| rustls::Error::General(format!("Cert parse error: {e:?}")))?;
@@ -164,7 +173,7 @@ pub fn get_fingerprint_hex(cert: &CertificateDer<'_>) -> Result<String, anyhow::
     Ok(hex::encode(fingerprint.as_ref()))
 }
 
-pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, anyhow::Error> {
+pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, BrokerError> {
     let cert = Cert::new_with_privk(privk)?;
     let fingerprint = cert.get_pubk_hash()?;
     Ok(fingerprint)

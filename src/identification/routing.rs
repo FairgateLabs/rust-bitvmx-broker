@@ -1,4 +1,4 @@
-use crate::identification::identifier::Identifier;
+use crate::identification::{errors::IdentificationError, identifier::Identifier};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::{
@@ -23,7 +23,7 @@ impl RoutingTable {
     }
 
     /// Load routing table from YAML file
-    pub fn load_from_file(path: &str) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
+    pub fn load_from_file(path: &str) -> Result<Arc<Mutex<Self>>, IdentificationError> {
         let content = fs::read_to_string(path)?;
 
         if content == "allow_all" {
@@ -40,16 +40,19 @@ impl RoutingTable {
         for line in lines {
             let parts: Vec<&str> = line.split(" --> ").collect();
             if parts.len() != 2 {
-                return Err(anyhow::anyhow!("Invalid routing line: {}", line));
+                return Err(IdentificationError::InvalidRoutingLine(line));
             }
 
-            let from = Identifier::from_str(parts[0].trim()).map_err(anyhow::Error::msg)?;
+            let from = Identifier::from_str(parts[0].trim())
+                .map_err(|e| IdentificationError::InvalidIdentifier(e))?;
 
             // Deserialize the right-hand side using JSON
             let to_list: Vec<String> = serde_json::from_str(parts[1].trim())?;
             let to_set: HashSet<Identifier> = to_list
                 .into_iter()
-                .map(|s| Identifier::from_str(&s).map_err(anyhow::Error::msg))
+                .map(|s| {
+                    Identifier::from_str(&s).map_err(|e| IdentificationError::InvalidIdentifier(e))
+                })
                 .collect::<Result<_, _>>()?;
 
             routes.insert(from, to_set);
@@ -62,7 +65,7 @@ impl RoutingTable {
     }
 
     /// Save routing table to YAML file
-    pub fn save_to_file(&self, path: &str) -> Result<(), anyhow::Error> {
+    pub fn save_to_file(&self, path: &str) -> Result<(), IdentificationError> {
         let mut output: Vec<String> = Vec::new();
 
         for (from, tos) in &self.routes {

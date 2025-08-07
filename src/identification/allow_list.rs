@@ -1,4 +1,7 @@
-use crate::{identification::identifier::PubkHash, rpc::tls_helper::Cert};
+use crate::{
+    identification::{errors::IdentificationError, identifier::PubkHash},
+    rpc::tls_helper::Cert,
+};
 use std::{
     collections::HashMap,
     fs,
@@ -20,7 +23,7 @@ impl AllowList {
             allow_all: false,
         }))
     }
-    pub fn from_file(allow_list_path: &str) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
+    pub fn from_file(allow_list_path: &str) -> Result<Arc<Mutex<Self>>, IdentificationError> {
         let content = fs::read_to_string(allow_list_path)?;
         if content == "allow_all" {
             return Ok(Arc::new(Mutex::new(Self {
@@ -37,7 +40,7 @@ impl AllowList {
     pub fn from_certs(
         certs: Vec<Cert>,
         addrs: Vec<IpAddr>,
-    ) -> Result<Arc<Mutex<Self>>, anyhow::Error> {
+    ) -> Result<Arc<Mutex<Self>>, IdentificationError> {
         let mut allow_list = HashMap::new();
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             let pubkey_hash = cert.get_pubk_hash()?;
@@ -77,12 +80,12 @@ impl AllowList {
         self.allow_list.remove(pubk_hash);
     }
 
-    pub fn remove_by_cert(&mut self, cert: &Cert) -> Result<(), anyhow::Error> {
+    pub fn remove_by_cert(&mut self, cert: &Cert) -> Result<(), IdentificationError> {
         let pubkey_hash = cert.get_pubk_hash()?;
         self.allow_list.remove(&pubkey_hash);
         Ok(())
     }
-    pub fn add_by_cert(&mut self, cert: &Cert, addr: IpAddr) -> Result<(), anyhow::Error> {
+    pub fn add_by_cert(&mut self, cert: &Cert, addr: IpAddr) -> Result<(), IdentificationError> {
         let pubkey_hash = cert.get_pubk_hash()?;
         self.allow_list.insert(pubkey_hash, addr);
         Ok(())
@@ -91,22 +94,22 @@ impl AllowList {
         &mut self,
         certs: Vec<Cert>,
         addrs: Vec<IpAddr>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(), IdentificationError> {
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             self.add_by_cert(&cert, addr)?;
         }
         Ok(())
     }
 
-    pub fn generate_yaml(&self, path: &str) -> Result<(), anyhow::Error> {
+    pub fn generate_yaml(&self, path: &str) -> Result<(), IdentificationError> {
         let yaml = serde_yaml::to_string(&self.allow_list)?;
         fs::write(path, yaml)?;
         info!("Allow list saved to allowlist.yaml");
         Ok(())
     }
 
-    pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, anyhow::Error> {
+    pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, IdentificationError> {
         let cert = Cert::new_with_privk(privk)?;
-        cert.get_pubk_hash()
+        Ok(cert.get_pubk_hash()?)
     }
 }
