@@ -1,6 +1,9 @@
 use crate::{
     identification::identifier::Identifier,
-    rpc::{errors::BrokerError, tls_helper::Cert},
+    rpc::{
+        errors::BrokerError,
+        tls_helper::{init_tls, Cert},
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -40,6 +43,8 @@ impl BrokerConfig {
         pubk_hash: String,
         id: Option<u8>,
     ) -> Result<Self, BrokerError> {
+        init_tls(); // Ensure the CryptoProvider is initialized
+                    //TODO: remove
         Ok(Self {
             port,
             ip,

@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +20,13 @@ impl Identifier {
             pubkey_hash,
             id: Some(id),
             address,
+        }
+    }
+    pub fn new_local(pubkey_hash: PubkHash, id: u8, port: u16) -> Self {
+        Identifier {
+            pubkey_hash,
+            id: Some(id),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
         }
     }
 }
