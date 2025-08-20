@@ -245,7 +245,7 @@ pub fn get_local_addr(port: u16) -> SocketAddr {
 #[test]
 fn test_channel() {
     init_tracing().unwrap();
-    let port = 10000;
+    let port = 10050;
     cleanup_storage(port, 3);
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![
@@ -836,6 +836,83 @@ fn test_local_channel() {
     );
     broker_server.close();
     cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_readme_example() {
+    let port = 10000;
+    cleanup_storage(port, 3);
+    let storage = Arc::new(Mutex::new(MemStorage::new()));
+
+    // Create Server
+    let server_cert = Cert::new().unwrap();
+    let server_pubkey_hash = server_cert.get_pubk_hash().unwrap();
+
+    let allow_list = AllowList::new();
+    let routing_table = RoutingTable::new();
+
+    let config = BrokerConfig::new(
+        10000,
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        server_pubkey_hash,
+        None,
+    )
+    .unwrap();
+    let _server = BrokerSync::new(
+        &config,
+        storage.clone(),
+        server_cert.clone(),
+        allow_list.clone(),
+        routing_table.clone(),
+    );
+
+    // Create Client
+    let client1_cert = Cert::new().unwrap();
+    let client2_cert = Cert::new().unwrap();
+    let client1_identifier = Identifier::new_local(client1_cert.get_pubk_hash().unwrap(), 0, 10001);
+    let client2_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
+
+    // Add clients to allow list
+    allow_list
+        .lock()
+        .unwrap()
+        .add_by_certs(
+            vec![
+                server_cert.clone(),
+                client1_cert.clone(),
+                client2_cert.clone(),
+            ],
+            vec![IpAddr::V4(Ipv4Addr::LOCALHOST); 3],
+        )
+        .unwrap();
+    // Add routing for clients
+    routing_table
+        .lock()
+        .unwrap()
+        .add_route(client1_identifier.clone(), client2_identifier.clone());
+
+    let destination_identifier =
+        Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
+
+    let client1 = Client::new(&config, client1_cert, allow_list).unwrap();
+
+    client1
+        .send_msg(
+            0,
+            10001,
+            destination_identifier.clone(),
+            "hello".to_string(),
+        )
+        .unwrap();
+    while let Some(msg) = client1
+        .get_msg(destination_identifier.clone())
+        .unwrap_or(None)
+    {
+        println!("{:?}", msg);
+        client1
+            .ack(destination_identifier.clone(), msg.uid)
+            .unwrap();
+    }
 }
 
 pub fn init_tracing() -> anyhow::Result<()> {

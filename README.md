@@ -1,6 +1,10 @@
 # Rust BitVMX Broker
 
+# Overview
+
 Rust BitVMX Broker is a message broker implemented in Rust. It provides a way to send and receive messages between clients using a synchronous server (`sync_server`), a client (`Client`), and a dual-channel (`DualChannel`) for communication.
+
+The broker uses TLS certificates for authentication, verifying only the public key hash of each certificate. An allowlist controls which identities are trusted, and a routing table restricts which clients are allowed to communicate with each other.
 
 ## ⚠️ Disclaimer
 
@@ -9,21 +13,33 @@ It is not production-ready, has not been audited, and future updates may introdu
 
 ## Features
 
-- Synchronous server for handling message requests.
-- Asynchronous client for sending and receiving messages.
-- Dual-channel for bidirectional communication.
+- 🖥️ **Synchronous server** for handling message requests  
+- 📡 **Asynchronous client** for sending and receiving messages  
+- 🔄 **Dual-channel** for bidirectional communication  
+- 🔐 **TLS authentication** with self-signed certificates  
+- 🧾 **Verification** by certificate public key hash  
+- ✅ **AllowList management** with optional wildcard  
+- 🗺️ **Routing table** to restrict client-to-client communication  
+
 
 ## Quick Start
 
 ### Creating a Sync Server
 
-To create a synchronous server, you need to initialize the server with a configuration and storage.
+To create a synchronous server, you need to initialize the server with a configuration, storage, certificate, allow list and routing table.
 
 ```rust
 fn main() {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
-    let config = BrokerConfig::new(10000, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-    let server = BrokerSync::new(&config, storage.clone());
+
+    let server_cert = Cert::new().unwrap();
+    let server_pubkey_hash = server_cert.get_pubk_hash().unwrap();
+
+    let allow_list = AllowList::new();
+    let routing_table = RoutingTable::new();
+    
+    let config = BrokerConfig::new(10000, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), server_pubkey_hash, None).unwrap();
+    let server = BrokerSync::new(&config, storage.clone(), server_cert, allow_list, routing_table);
     // Start the server...
 }
 ```
@@ -32,56 +48,67 @@ fn main() {
 
 ### Creating a Client
 
-To create a client, you need to initialize it with a configuration.
+To create a client, you need to initialize it with a configuration, certificate and allow list.
 
 ```rust
-use bitvmx_broker::rpc::client::Client;
-use bitvmx_broker::rpc::BrokerConfig;
-
 fn main() {
-    let config = BrokerConfig::new(10000, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-    let client = Client::new(&config);
+    let client1_cert = Cert::new().unwrap();
+    let client2_cert = Cert::new().unwrap();
 
-    let ret = client.send_msg(1, 2, "hello".to_string());
+    let destination_identifier =
+        Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
 
-    while let Some(msg) = client.get_msg(2).unwrap_or(None) {
+    let client1 = Client::new(&config, client1_cert, allow_list).unwrap();
+
+    client1.send_msg(0, 10001, destination_identifier.clone(), "hello".to_string()).unwrap();
+    while let Some(msg) = client1.get_msg(destination_identifier.clone()).unwrap_or(None)
+    {
         println!("{:?}", msg);
-        client.ack(2, msg.uid).unwrap();
+        client1.ack(destination_identifier.clone(), msg.uid).unwrap();
     }
 }
 ```
 
 ### Creating a DualChannel
 
-To create a dual-channel, you need to initialize it with a configuration and an ID.
+To create a dual-channel, you need to initialize it with a configuration, certificate, address and allow list.
 
 ```rust
-use bitvmx_broker::channel::channel::DualChannel;
-use bitvmx_broker::rpc::BrokerConfig;
-
 fn main() {
-    let config = BrokerConfig::new(10000, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-    
-    let user_1 = DualChannel::new(&config, 1);
-    let user_2 = DualChannel::new(&config, 2);
+    let local_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let (server_cert, client1_cert, client2_cert) = (
+        Cert::new().unwrap(),
+        Cert::new().unwrap(),
+        Cert::new().unwrap(),
+    );
+    let certs = vec![server_cert.clone(), client1_cert.clone(), client2_cert.clone()];
+    let addrs = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); certs.len()];
+    let allow_list = AllowList::from_certs(certs, addrs).unwrap();
+    let server_pubkey_hash = server_cert.get_pubk_hash().unwrap();
+    let client2_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
 
-    user_1.send(2, "Hello!".to_string()).unwrap();
+    let client1_addr = SocketAddr::new(local_addr, 10001);
+    let client2_addr = SocketAddr::new(local_addr, 10002);
+
+    let server_config = BrokerConfig::new(10000, Some(local_addr), server_pubkey_hash, None).unwrap();
+    
+    let user_1 = DualChannel::new(&server_config, client1_cert, None, client1_addr, allow_list);
+    let user_2 = DualChannel::new(&server_config, client2_cert, None, client2_addr, allow_list);
+
+    user_1.send(client2_identifier, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();
     server.close();
 }
 ```
 
-## Certificates
-To generate the self-signed certificates and the `allowlist.yaml`, run the appropriate script depending on your OS:
-### 🪟 On Windows
-```sh
-cmd /c "cd certs && generate-certs.bat"
-```
-### 🐧 On Linux
-```sh
-(cd certs && ./generate-certs.sh)
-```
+## Development Setup
+
+1. Clone the repository
+2. Install dependencies: `cargo build`
+3. Run tests: `cargo test -- --ignored`
+
+## Contributing
+Contributions are welcome! Please open an issue or submit a pull request on GitHub.
 
 ## License
-
 This project is licensed under the MIT License.
