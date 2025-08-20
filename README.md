@@ -21,8 +21,32 @@ It is not production-ready, has not been audited, and future updates may introdu
 - ✅ **AllowList management** with optional wildcard  
 - 🗺️ **Routing table** to restrict client-to-client communication  
 
+## Methods
 
-## Quick Start
+### Identification
+- **from_file / load_from_file**: Create an allow list or routing table from a `.yaml` file  
+- **from_certs**: Create an allow list from certificates  
+- **add**: Add a specific public key hash and address to the allow list  
+- **add_routes**: Add routes to the routing table  
+- **remove**: Remove a specific public key hash from the allow list  
+- **remove_route**: Remove a route from the routing table  
+- **remove_all / remove_all_to**: Remove all routes from the routing table, or only those to a specific destination  
+- **generate_yaml / save_to_file**: Export the allow list or routing table to a `.yaml` file  
+
+### Communication
+
+#### Client
+- **send_msg**: Send a message to a destination identifier  
+- **get_msg**: Receive a message for a given identifier  
+- **ack**: Acknowledge receipt of a message  
+
+#### DualChannel
+- **send**: Send a message to a specific destination identifier  
+- **send_server**: Send a message directly to the server  
+- **recv**: Receive the next available message  
+
+
+## Usage
 
 ### Creating a Sync Server
 
@@ -43,8 +67,6 @@ fn main() {
     // Start the server...
 }
 ```
-
-
 
 ### Creating a Client
 
