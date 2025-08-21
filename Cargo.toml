@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "BitVMX Broker"
 keywords = ["BitVMX", "Broker"]
-repository = "https://https://github.com/FairgateLabs/rust-bitvmx-broker"
+repository = "https://github.com/FairgateLabs/rust-bitvmx-broker"
 readme = "README.md"
 
 [dependencies]
