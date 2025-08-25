@@ -56,7 +56,6 @@ where
 }
 
 impl<S> Broker for BrokerServer<S>
-//TODO: add error handling
 where
     S: StorageApi + 'static + Send + Sync,
 {
