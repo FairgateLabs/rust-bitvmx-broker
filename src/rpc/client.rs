@@ -30,14 +30,7 @@ pub struct Client {
 
 impl Clone for Client {
     fn clone(&self) -> Self {
-        let rt = Runtime::new().unwrap();
-        Self {
-            rt,
-            address: self.address,
-            client: Arc::clone(&self.client),
-            cert: self.cert.clone(),
-            allow_list: self.allow_list.clone(),
-        }
+        self.try_clone().expect("failed to clone Client")
     }
 }
 
@@ -98,7 +91,7 @@ impl Client {
         let ipaddr = IpAddr::from_str(&peer_addr.ip().to_string())?;
         let allow = self
             .allow_list
-            .lock_or_err("allow_llist")?
+            .lock_or_err::<BrokerError>("allow_llist")?
             .is_allowed(&server_fingerprint, ipaddr);
 
         if !allow {
@@ -147,17 +140,17 @@ impl Client {
         let client = self.get_or_connect().await?;
         Ok(client
             .send(context::current(), from_id, from_port, dest, msg)
-            .await?)
+            .await??)
     }
 
     async fn async_get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
         let client = self.get_or_connect().await?;
-        Ok(client.get(context::current(), dest).await?)
+        Ok(client.get(context::current(), dest).await??)
     }
 
     async fn async_ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
-        Ok(client.ack(context::current(), dest, uid).await?)
+        Ok(client.ack(context::current(), dest, uid).await??)
     }
 
     pub fn send_msg(
@@ -177,5 +170,16 @@ impl Client {
 
     pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
         self.rt.block_on(self.async_ack(dest, uid))
+    }
+
+    fn try_clone(&self) -> Result<Self, BrokerError> {
+        let rt = Runtime::new()?;
+        Ok(Self {
+            rt,
+            address: self.address,
+            client: Arc::clone(&self.client),
+            cert: self.cert.clone(),
+            allow_list: self.allow_list.clone(),
+        })
     }
 }

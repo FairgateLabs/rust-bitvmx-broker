@@ -1,7 +1,10 @@
 use super::{server::run, BrokerConfig, StorageApi};
 use crate::{
     identification::{allow_list::AllowList, routing::RoutingTable},
-    rpc::{errors::MutexExt, tls_helper::Cert},
+    rpc::{
+        errors::{BrokerError, MutexExt},
+        tls_helper::Cert,
+    },
 };
 use std::sync::{Arc, Mutex};
 use tokio::{runtime::Runtime, sync::mpsc};
@@ -18,11 +21,11 @@ impl BrokerSync {
         cert: Cert,
         allow_list: Arc<Mutex<AllowList>>,
         routing: Arc<Mutex<RoutingTable>>,
-    ) -> Self
+    ) -> Result<Self, BrokerError>
     where
         S: 'static + Send + Sync + StorageApi + Clone,
     {
-        let rt = Runtime::new().unwrap();
+        let rt = Runtime::new()?;
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
@@ -35,23 +38,29 @@ impl BrokerSync {
             routing.clone(),
         ));
 
-        Self { rt, shutdown_tx }
+        Ok(Self { rt, shutdown_tx })
     }
 
     // Do not use in production, this is for testing purposes only
-    pub fn new_simple<S>(config: &BrokerConfig, storage: Arc<Mutex<S>>, cert: Cert) -> Self
+    pub fn new_simple<S>(
+        config: &BrokerConfig,
+        storage: Arc<Mutex<S>>,
+        cert: Cert,
+    ) -> Result<Self, BrokerError>
     where
         S: 'static + Send + Sync + StorageApi + Clone,
     {
-        let rt = Runtime::new().unwrap();
+        let rt = Runtime::new()?;
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
         let allow_list = AllowList::new();
-        allow_list.lock_or_err("allow_list").unwrap().allow_all();
+        allow_list
+            .lock_or_err::<BrokerError>("allow_list")?
+            .allow_all();
 
         let routing = RoutingTable::new();
-        routing.lock_or_err("routing").unwrap().allow_all();
+        routing.lock_or_err::<BrokerError>("routing")?.allow_all();
 
         rt.spawn(run(
             shutdown_rx,
@@ -62,7 +71,7 @@ impl BrokerSync {
             routing.clone(),
         ));
 
-        Self { rt, shutdown_tx }
+        Ok(Self { rt, shutdown_tx })
     }
 
     pub fn close(&mut self) {

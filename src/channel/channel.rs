@@ -55,7 +55,9 @@ impl DualChannel {
         let my_cert = Cert::new()?;
         let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), my_port);
         let allow_list = AllowList::new();
-        allow_list.lock_or_err("allow_llist")?.allow_all();
+        allow_list
+            .lock_or_err::<BrokerError>("allow_llist")?
+            .allow_all();
         let my_identifier = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
             id: Some(my_id),
@@ -126,17 +128,23 @@ where
     fn remove(&mut self, dest: String, uid: u64) -> bool;*/
     pub fn send(&self, dest: Identifier, msg: String) -> Result<bool, BrokerError> {
         self.storage
-            .lock_or_err("storage")?
+            .lock_or_err::<BrokerError>("storage")?
             .insert(self.my_id.clone(), dest, msg);
         Ok(true)
     }
 
     pub fn get(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
-        Ok(self.storage.lock_or_err("storage")?.get(dest))
+        Ok(self
+            .storage
+            .lock_or_err::<BrokerError>("storage")?
+            .get(dest))
     }
 
     pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
-        Ok(self.storage.lock_or_err("storage")?.remove(dest, uid))
+        Ok(self
+            .storage
+            .lock_or_err::<BrokerError>("storage")?
+            .remove(dest, uid))
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, BrokerError> {

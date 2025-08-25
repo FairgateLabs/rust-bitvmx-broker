@@ -82,7 +82,8 @@ fn main() {
         Arc::new(Mutex::new(BrokerStorage::new(broker_backend)))
     };
 
-    let mut server = BrokerSync::new(&config, storage.clone(), cert, allow_list.clone(), routing);
+    let mut server =
+        BrokerSync::new(&config, storage.clone(), cert, allow_list.clone(), routing).unwrap();
 
     wait_ctrl();
     server.close();

@@ -1,7 +1,7 @@
 use crate::{
     identification::identifier::Identifier,
     rpc::{
-        errors::BrokerError,
+        errors::{BrokerError, BrokerRpcError},
         tls_helper::{init_tls, Cert},
     },
 };
@@ -22,9 +22,14 @@ pub struct Message {
 
 #[tarpc::service]
 pub(crate) trait Broker {
-    async fn send(from_id: u8, from_port: u16, dest: Identifier, msg: String) -> bool;
-    async fn get(dest: Identifier) -> Option<Message>;
-    async fn ack(dest: Identifier, uid: u64) -> bool;
+    async fn send(
+        from_id: u8,
+        from_port: u16,
+        dest: Identifier,
+        msg: String,
+    ) -> Result<bool, BrokerRpcError>;
+    async fn get(dest: Identifier) -> Result<Option<Message>, BrokerRpcError>;
+    async fn ack(dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError>;
     async fn ping() -> bool;
 }
 

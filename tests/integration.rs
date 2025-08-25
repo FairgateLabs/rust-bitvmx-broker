@@ -46,7 +46,8 @@ fn prepare_server(
         server_cert,
         allow_list.clone(),
         routing,
-    );
+    )
+    .unwrap();
     let my_address = get_local_addr(port);
     let local = LocalChannel::new(
         Identifier {

@@ -2,6 +2,7 @@ use super::{BrokerConfig, Message, StorageApi};
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
+        errors::{BrokerRpcError, MutexExt},
         tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
         Broker,
     },
@@ -66,7 +67,7 @@ where
         from_port: u16,
         dest: Identifier,
         msg: String,
-    ) -> bool {
+    ) -> Result<bool, BrokerRpcError> {
         let address = SocketAddr::new(self.client_address.ip(), from_port);
         let from = Identifier {
             pubkey_hash: self.client_pubkey_hash.clone(),
@@ -74,24 +75,33 @@ where
             address,
         };
         let allowed = {
-            let routing = self.routing.lock().unwrap();
+            let routing = self.routing.lock_or_err("routing")?;
             routing.can_route(&from, &dest)
         };
 
         if !allowed {
             warn!("Routing denied: {} cannot send to {}", from, dest);
-            return false;
+            return Ok(false);
         }
-        self.storage.lock().unwrap().insert(from, dest, msg);
-        true
+        self.storage.lock_or_err("storage")?.insert(from, dest, msg);
+        Ok(true)
     }
 
-    async fn get(self, _: context::Context, dest: Identifier) -> Option<Message> {
-        self.storage.lock().unwrap().get(dest)
+    async fn get(
+        self,
+        _: context::Context,
+        dest: Identifier,
+    ) -> Result<Option<Message>, BrokerRpcError> {
+        Ok(self.storage.lock_or_err("storage")?.get(dest))
     }
 
-    async fn ack(self, _: context::Context, dest: Identifier, uid: u64) -> bool {
-        self.storage.lock().unwrap().remove(dest, uid)
+    async fn ack(
+        self,
+        _: context::Context,
+        dest: Identifier,
+        uid: u64,
+    ) -> Result<bool, BrokerRpcError> {
+        Ok(self.storage.lock_or_err("storage")?.remove(dest, uid))
     }
 
     async fn ping(self, _: context::Context) -> bool {
