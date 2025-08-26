@@ -150,6 +150,19 @@ impl Cert {
         let spki_der = cert.get_key_pair().public_key_der();
         Ok((key_pem, cert_pem, spki_der))
     }
+
+    fn generate_private_key() -> Result<String, BrokerError> {
+        let keypair = KeyPair::generate(&rcgen::PKCS_RSA_SHA256)?;
+        Ok(keypair.serialize_pem())
+    }
+
+    pub fn generate_key_file(path: &str, name: &str) -> Result<(), BrokerError> {
+        let key = Self::generate_private_key()?;
+        let key_path = format!("{path}/{name}.key");
+        std::fs::write(key_path, key)?;
+        info!("Private key saved to {path}/{name}.key");
+        Ok(())
+    }
 }
 
 #[derive(Debug)]

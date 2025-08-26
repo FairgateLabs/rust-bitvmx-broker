@@ -1,5 +1,8 @@
 use crate::{
-    identification::{errors::IdentificationError, identifier::PubkHash},
+    identification::{
+        errors::IdentificationError,
+        identifier::{Identifier, PubkHash},
+    },
     rpc::tls_helper::Cert,
 };
 use std::{
@@ -45,6 +48,19 @@ impl AllowList {
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             let pubkey_hash = cert.get_pubk_hash()?;
             allow_list.insert(pubkey_hash, addr);
+        }
+        Ok(Arc::new(Mutex::new(Self {
+            allow_list,
+            allow_all: false,
+        })))
+    }
+
+    pub fn from_identifiers(
+        identifiers: Vec<Identifier>,
+    ) -> Result<Arc<Mutex<Self>>, IdentificationError> {
+        let mut allow_list = HashMap::new();
+        for identifier in identifiers.into_iter() {
+            allow_list.insert(identifier.pubkey_hash, identifier.address.ip());
         }
         Ok(Arc::new(Mutex::new(Self {
             allow_list,

@@ -13,6 +13,8 @@ pub mod server;
 pub mod sync_server;
 pub mod tls_helper;
 
+const SERVER_ID: u8 = 0; // Default ID for the server
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
     pub uid: u64,
@@ -38,23 +40,16 @@ pub struct BrokerConfig {
     port: u16,
     ip: Option<IpAddr>,
     pubk_hash: String,
-    id: u8,
 }
 
 impl BrokerConfig {
-    pub fn new(
-        port: u16,
-        ip: Option<IpAddr>,
-        pubk_hash: String,
-        id: Option<u8>,
-    ) -> Result<Self, BrokerError> {
+    pub fn new(port: u16, ip: Option<IpAddr>, pubk_hash: String) -> Result<Self, BrokerError> {
         init_tls(); // Ensure the CryptoProvider is initialized
                     //TODO: remove
         Ok(Self {
             port,
             ip,
             pubk_hash,
-            id: id.unwrap_or(0), // Default to 0 if not provided
         })
     }
 
@@ -63,13 +58,12 @@ impl BrokerConfig {
         port: u16,
         ip: Option<IpAddr>,
     ) -> Result<(Self, Identifier, Cert), BrokerError> {
-        let id = 0; // Default to 0 if not provided
         let cert = Cert::new()?;
         let pubk_hash = cert.get_pubk_hash()?;
 
         let identifier = Identifier {
             pubkey_hash: pubk_hash.clone(),
-            id: Some(id),
+            id: Some(SERVER_ID),
             address: SocketAddr::new(ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)), port),
         };
         Ok((
@@ -77,7 +71,6 @@ impl BrokerConfig {
                 port,
                 ip,
                 pubk_hash,
-                id,
             },
             identifier,
             cert,
@@ -89,7 +82,7 @@ impl BrokerConfig {
     }
 
     pub fn get_id(&self) -> u8 {
-        self.id
+        SERVER_ID
     }
 
     pub fn get_port(&self) -> u16 {

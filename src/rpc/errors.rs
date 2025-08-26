@@ -51,6 +51,9 @@ pub enum BrokerError {
 
     #[error("Broker Rpc Error: {0}")]
     BrokerRpcError(#[from] BrokerRpcError),
+
+    #[error("Other error: {0}")]
+    Other(String),
 }
 
 #[derive(Error, Debug, Serialize, Deserialize)]

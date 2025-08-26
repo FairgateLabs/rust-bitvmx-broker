@@ -26,8 +26,21 @@ impl DualChannel {
         my_cert: Cert,
         my_id: Option<u8>,
         my_address: SocketAddr,
-        allow_list: Arc<Mutex<AllowList>>,
+        allow_list: Option<Arc<Mutex<AllowList>>>, // If it's None, the allow list will contain only the one in config
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
+        let allow_list = match allow_list {
+            Some(al) => al,
+            None => {
+                let server_identifier =
+                    Identifier::new(config.get_pubk_hash(), 0, config.get_address()); // ID is 0 for the server
+                AllowList::from_identifiers(vec![server_identifier]).map_err(|e| {
+                    BrokerError::Other(format!(
+                        "Failed to create allow list from config identifier: {}",
+                        e
+                    ))
+                })?
+            }
+        };
         let client = Client::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
@@ -64,7 +77,7 @@ impl DualChannel {
             address: my_address,
         };
         Ok((
-            Self::new(config, my_cert, Some(my_id), my_address, allow_list)?,
+            Self::new(config, my_cert, Some(my_id), my_address, Some(allow_list))?,
             my_identifier,
         ))
     }

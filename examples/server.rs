@@ -67,7 +67,7 @@ fn main() {
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
     let routing = RoutingTable::new();
     routing.lock().unwrap().allow_all();
-    let config = BrokerConfig::new(flags.port, None, cert.get_pubk_hash().unwrap(), None).unwrap();
+    let config = BrokerConfig::new(flags.port, None, cert.get_pubk_hash().unwrap()).unwrap();
 
     #[cfg(not(feature = "storagebackend"))]
     let storage = Arc::new(Mutex::new(
