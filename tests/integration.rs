@@ -37,7 +37,6 @@ fn prepare_server(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert.get_pubk_hash().unwrap(),
-        None,
     )
     .unwrap();
     let server = BrokerSync::new(
@@ -132,11 +131,17 @@ fn prepare_client_with_id(
         server_port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubk_hash.to_string(),
-        None,
     )
     .unwrap();
     let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), client_port);
-    let user = DualChannel::new(&server_config, client_cert, id, my_address, allow_list).unwrap();
+    let user = DualChannel::new(
+        &server_config,
+        client_cert,
+        id,
+        my_address,
+        Some(allow_list),
+    )
+    .unwrap();
     user
 }
 
@@ -311,7 +316,6 @@ fn test_ack() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
-        None,
     )
     .unwrap();
     let myclient = Client::new(
@@ -374,7 +378,6 @@ fn test_reconnect() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
-        None,
     )
     .unwrap();
     let myclient = Client::new(
@@ -856,7 +859,6 @@ fn test_readme_example() {
         10000,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubkey_hash,
-        None,
     )
     .unwrap();
     let _server = BrokerSync::new(
