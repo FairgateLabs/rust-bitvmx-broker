@@ -1,4 +1,5 @@
 use bitvmx_broker::rpc::tls_helper::Cert;
+use rsa::rand_core::OsRng;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 pub fn init_tracing() -> anyhow::Result<()> {
@@ -14,9 +15,10 @@ pub fn init_tracing() -> anyhow::Result<()> {
     Ok(())
 }
 fn main() -> anyhow::Result<()> {
-    //ASK: no puedo generar con RSA porque no lo soporta
     init_tracing()?;
-    Cert::generate_key_file("../certs", "services.key")?;
+    let mut rng = OsRng;
+    let rsa_bits = 2048;
+    Cert::generate_key_file("./certs", "services", &mut rng, rsa_bits)?;
 
     Ok(())
 }

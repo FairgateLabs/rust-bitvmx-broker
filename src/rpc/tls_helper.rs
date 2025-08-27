@@ -3,6 +3,9 @@ use crate::rpc::errors::BrokerError;
 use pem::Pem;
 use rcgen::{Certificate, CertificateParams, KeyPair};
 use ring::digest::{digest, SHA256};
+use rsa::pkcs8::EncodePrivateKey;
+use rsa::rand_core::{CryptoRng, RngCore};
+use rsa::RsaPrivateKey;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
@@ -151,13 +154,23 @@ impl Cert {
         Ok((key_pem, cert_pem, spki_der))
     }
 
-    fn generate_private_key() -> Result<String, BrokerError> {
-        let keypair = KeyPair::generate(&rcgen::PKCS_RSA_SHA256)?;
-        Ok(keypair.serialize_pem())
+    fn generate_private_key<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        bits: usize,
+    ) -> Result<String, BrokerError> {
+        let private_key = RsaPrivateKey::new(rng, bits)?;
+        let pem = private_key.to_pkcs8_pem(Default::default())?.to_string();
+        Ok(pem)
     }
 
-    pub fn generate_key_file(path: &str, name: &str) -> Result<(), BrokerError> {
-        let key = Self::generate_private_key()?;
+    pub fn generate_key_file<R: RngCore + CryptoRng>(
+        path: &str,
+        name: &str,
+        rng: &mut R,
+        bits: usize,
+    ) -> Result<(), BrokerError> {
+        let key = Self::generate_private_key(rng, bits)?;
+        std::fs::create_dir_all(path)?;
         let key_path = format!("{path}/{name}.key");
         std::fs::write(key_path, key)?;
         info!("Private key saved to {path}/{name}.key");

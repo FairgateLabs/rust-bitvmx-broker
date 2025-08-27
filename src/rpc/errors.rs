@@ -52,6 +52,12 @@ pub enum BrokerError {
     #[error("Broker Rpc Error: {0}")]
     BrokerRpcError(#[from] BrokerRpcError),
 
+    #[error("RSA Error: {0}")]
+    RsaError(#[from] rsa::Error),
+
+    #[error("Invalid private key for PEM {0}")]
+    InvalidPrivateKey(#[from] rsa::pkcs8::Error),
+
     #[error("Other error: {0}")]
     Other(String),
 }
