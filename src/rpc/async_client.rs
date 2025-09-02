@@ -3,38 +3,26 @@ use std::{
     sync::Arc,
 };
 
-use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
+use tokio::{net::TcpStream, sync::Mutex};
 
 use super::{errors::BrokerError, BrokerConfig, Message};
 use crate::rpc::BrokerClient;
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
 
-pub struct Client {
-    rt: Runtime,
+#[derive(Debug, Clone)]
+pub struct AsyncClient {
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
 }
-impl Clone for Client {
-    fn clone(&self) -> Self {
-        let rt = Runtime::new().unwrap();
-        Self {
-            rt: rt,
-            address: self.address,
-            client: Arc::clone(&self.client),
-        }
-    }
-}
 
-impl Client {
+impl AsyncClient {
     pub fn new(config: &BrokerConfig) -> Self {
-        let rt = Runtime::new().unwrap();
         let address = SocketAddr::new(
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,
         );
 
         Self {
-            rt,
             address,
             client: Arc::new(Mutex::new(None)),
         }
@@ -76,30 +64,18 @@ impl Client {
         Err(BrokerError::Disconnected)
     }
 
-    pub async fn async_send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
+    pub async fn send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.send(context::current(), from, dest, msg).await?)
     }
 
-    pub async fn async_get_msg(&self, dest: u32) -> Result<Option<Message>, BrokerError> {
+    pub async fn get_msg(&self, dest: u32) -> Result<Option<Message>, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.get(context::current(), dest).await?)
     }
 
-    pub async fn async_ack(&self, dest: u32, uid: u64) -> Result<bool, BrokerError> {
+    pub async fn ack(&self, dest: u32, uid: u64) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.ack(context::current(), dest, uid).await?)
-    }
-
-    pub fn send_msg(&self, from: u32, dest: u32, msg: String) -> Result<bool, BrokerError> {
-        self.rt.block_on(self.async_send_msg(from, dest, msg))
-    }
-
-    pub fn get_msg(&self, dest: u32) -> Result<Option<Message>, BrokerError> {
-        self.rt.block_on(self.async_get_msg(dest))
-    }
-
-    pub fn ack(&self, dest: u32, uid: u64) -> Result<bool, BrokerError> {
-        self.rt.block_on(self.async_ack(dest, uid))
     }
 }
