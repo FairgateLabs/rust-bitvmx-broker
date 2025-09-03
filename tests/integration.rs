@@ -920,7 +920,7 @@ fn test_readme_example() {
 
 pub fn init_tracing() -> anyhow::Result<()> {
     let filter = EnvFilter::builder()
-        .parse("info,tarpc=off") // Include everything at "info" except `libp2p`
+        .parse("info,tarpc=off") // Include everything at "info"
         .expect("Invalid filter");
 
     tracing_subscriber::registry()
