@@ -2,6 +2,7 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
+pub mod async_client;
 pub mod client;
 pub mod errors;
 pub mod server;
