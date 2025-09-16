@@ -44,14 +44,14 @@ pub struct BrokerConfig {
 }
 
 impl BrokerConfig {
-    pub fn new(port: u16, ip: Option<IpAddr>, pubk_hash: String) -> Result<Self, BrokerError> {
+    pub fn new(port: u16, ip: Option<IpAddr>, pubk_hash: String) -> Self {
         init_tls(); // Ensure the CryptoProvider is initialized
                     //TODO: remove
-        Ok(Self {
+        Self {
             port,
             ip,
             pubk_hash,
-        })
+        }
     }
 
     // Do not use in production, this is for testing purposes

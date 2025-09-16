@@ -34,22 +34,18 @@ impl Clone for Client {
 }
 
 impl Client {
-    pub fn new(
-        config: &BrokerConfig,
-        cert: Cert,
-        allow_list: Arc<ArcMutex<AllowList>>,
-    ) -> Result<Self, BrokerError> {
+    pub fn new(config: &BrokerConfig, cert: Cert, allow_list: Arc<ArcMutex<AllowList>>) -> Self {
         let address = SocketAddr::new(
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,
         );
         info!("Client address: {}", address);
-        Ok(Self {
+        Self {
             address,
             client: Arc::new(Mutex::new(None)),
             cert,
             allow_list,
-        })
+        }
     }
 
     async fn connect(&self) -> Result<(), BrokerError> {

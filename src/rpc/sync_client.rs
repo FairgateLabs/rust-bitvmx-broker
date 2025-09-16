@@ -25,7 +25,7 @@ impl SyncClient {
         allow_list: Arc<ArcMutex<AllowList>>,
     ) -> Result<Self, BrokerError> {
         let rt = Runtime::new()?;
-        let client = Client::new(config, cert, allow_list)?;
+        let client = Client::new(config, cert, allow_list);
         Ok(Self { rt, client })
     }
 

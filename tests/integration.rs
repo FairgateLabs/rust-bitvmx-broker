@@ -37,8 +37,7 @@ fn prepare_server(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert.get_pubk_hash().unwrap(),
-    )
-    .unwrap();
+    );
     let server = BrokerSync::new(
         &server_config,
         storage.clone(),
@@ -131,8 +130,7 @@ fn prepare_client_with_id(
         server_port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubk_hash.to_string(),
-    )
-    .unwrap();
+    );
     let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), client_port);
     let user = DualChannel::new(
         &server_config,
@@ -316,8 +314,7 @@ fn test_ack() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
-    )
-    .unwrap();
+    );
     let myclient = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
@@ -378,8 +375,7 @@ fn test_reconnect() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
-    )
-    .unwrap();
+    );
     let myclient = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
@@ -859,8 +855,7 @@ fn test_readme_example() {
         10000,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubkey_hash,
-    )
-    .unwrap();
+    );
     let _server = BrokerSync::new(
         &config,
         storage.clone(),

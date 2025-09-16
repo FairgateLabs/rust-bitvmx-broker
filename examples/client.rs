@@ -58,8 +58,7 @@ fn main() -> anyhow::Result<()> {
             flags.port,
             Some(flags.ip_addr),
             cert.get_pubk_hash().unwrap(),
-        )
-        .unwrap(),
+        ),
         cert,
         allow_list,
     )
