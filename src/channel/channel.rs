@@ -1,8 +1,8 @@
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
-        client::Client,
         errors::{BrokerError, MutexExt},
+        sync_client::SyncClient,
         tls_helper::Cert,
         BrokerConfig, Message, StorageApi,
     },
@@ -14,7 +14,7 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub struct DualChannel {
-    client: Client,
+    client: SyncClient,
     my_id: Identifier,
     dest_id: Identifier, // Identifier of the destination
 }
@@ -41,7 +41,7 @@ impl DualChannel {
                 })?
             }
         };
-        let client = Client::new(config, my_cert.clone(), allow_list)?;
+        let client = SyncClient::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
             id: Some(my_id.unwrap_or(0)), // Default to 0 if not provided

@@ -1,6 +1,6 @@
 use bitvmx_broker::{
     identification::{allow_list::AllowList, identifier::Identifier},
-    rpc::{client::Client, tls_helper::Cert, BrokerConfig},
+    rpc::{sync_client::SyncClient, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
 use std::{
@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
     let cert = Cert::new().unwrap();
     let allow_list =
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
-    let client = Client::new(
+    let client = SyncClient::new(
         &BrokerConfig::new(
             flags.port,
             Some(flags.ip_addr),

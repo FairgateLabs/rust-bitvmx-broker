@@ -14,14 +14,13 @@ use std::{
     sync::{Arc, Mutex as ArcMutex},
 };
 use tarpc::{client, context, serde_transport, tokio_serde::formats::Json};
-use tokio::{net::TcpStream, runtime::Runtime, sync::Mutex};
+use tokio::{net::TcpStream, sync::Mutex};
 use tokio_rustls::{rustls::ClientConfig, TlsConnector};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::info;
 
 #[derive(Debug)]
 pub struct Client {
-    rt: Runtime,
     address: SocketAddr,
     client: Arc<Mutex<Option<BrokerClient>>>,
     cert: Cert,
@@ -40,14 +39,12 @@ impl Client {
         cert: Cert,
         allow_list: Arc<ArcMutex<AllowList>>,
     ) -> Result<Self, BrokerError> {
-        let rt = Runtime::new()?;
         let address = SocketAddr::new(
             config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             config.port,
         );
         info!("Client address: {}", address);
         Ok(Self {
-            rt,
             address,
             client: Arc::new(Mutex::new(None)),
             cert,
@@ -130,7 +127,7 @@ impl Client {
         Err(BrokerError::Disconnected)
     }
 
-    async fn async_send_msg(
+    pub async fn async_send_msg(
         &self,
         from_id: u8,
         from_port: u16,
@@ -143,39 +140,18 @@ impl Client {
             .await??)
     }
 
-    async fn async_get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
+    pub async fn async_get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.get(context::current(), dest).await??)
     }
 
-    async fn async_ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
+    pub async fn async_ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.ack(context::current(), dest, uid).await??)
     }
 
-    pub fn send_msg(
-        &self,
-        from_id: u8,
-        from_port: u16,
-        dest: Identifier,
-        msg: String,
-    ) -> Result<bool, BrokerError> {
-        self.rt
-            .block_on(self.async_send_msg(from_id, from_port, dest, msg))
-    }
-
-    pub fn get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
-        self.rt.block_on(self.async_get_msg(dest))
-    }
-
-    pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
-        self.rt.block_on(self.async_ack(dest, uid))
-    }
-
     fn try_clone(&self) -> Result<Self, BrokerError> {
-        let rt = Runtime::new()?;
         Ok(Self {
-            rt,
             address: self.address,
             client: Arc::clone(&self.client),
             cert: self.cert.clone(),

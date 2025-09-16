@@ -2,7 +2,7 @@ use bitvmx_broker::{
     channel::channel::{DualChannel, LocalChannel},
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
-        client::Client, errors::BrokerError, sync_server::BrokerSync, tls_helper::Cert,
+        errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
         BrokerConfig,
     },
 };
@@ -318,7 +318,7 @@ fn test_ack() {
         client1.get_pkh(),
     )
     .unwrap();
-    let myclient = Client::new(
+    let myclient = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list,
@@ -380,7 +380,7 @@ fn test_reconnect() {
         client1.get_pkh(),
     )
     .unwrap();
-    let myclient = Client::new(
+    let myclient = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list.clone(),
@@ -897,7 +897,7 @@ fn test_readme_example() {
     let destination_identifier =
         Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
 
-    let client1 = Client::new(&config, client1_cert, allow_list).unwrap();
+    let client1 = SyncClient::new(&config, client1_cert, allow_list).unwrap();
 
     client1
         .send_msg(
