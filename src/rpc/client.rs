@@ -126,13 +126,12 @@ impl Client {
     pub async fn async_send_msg(
         &self,
         from_id: u8,
-        from_port: u16,
         dest: Identifier,
         msg: String,
     ) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client
-            .send(context::current(), from_id, from_port, dest, msg)
+            .send(context::current(), from_id, dest, msg)
             .await??)
     }
 

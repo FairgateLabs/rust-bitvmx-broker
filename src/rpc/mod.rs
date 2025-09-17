@@ -25,12 +25,7 @@ pub struct Message {
 
 #[tarpc::service]
 pub(crate) trait Broker {
-    async fn send(
-        from_id: u8,
-        from_port: u16,
-        dest: Identifier,
-        msg: String,
-    ) -> Result<bool, BrokerRpcError>;
+    async fn send(from_id: u8, dest: Identifier, msg: String) -> Result<bool, BrokerRpcError>;
     async fn get(dest: Identifier) -> Result<Option<Message>, BrokerRpcError>;
     async fn ack(dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError>;
     async fn ping() -> bool;
@@ -65,7 +60,7 @@ impl BrokerConfig {
         let identifier = Identifier {
             pubkey_hash: pubk_hash.clone(),
             id: Some(SERVER_ID),
-            address: SocketAddr::new(ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)), port),
+            ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         };
         Ok((
             Self {
@@ -95,6 +90,10 @@ impl BrokerConfig {
             self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             self.port,
         )
+    }
+
+    pub fn get_ip(&self) -> IpAddr {
+        self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
     }
 }
 

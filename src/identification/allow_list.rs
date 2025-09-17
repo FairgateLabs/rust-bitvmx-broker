@@ -60,7 +60,7 @@ impl AllowList {
     ) -> Result<Arc<Mutex<Self>>, IdentificationError> {
         let mut allow_list = HashMap::new();
         for identifier in identifiers.into_iter() {
-            allow_list.insert(identifier.pubkey_hash, identifier.address.ip());
+            allow_list.insert(identifier.pubkey_hash, identifier.ip);
         }
         Ok(Arc::new(Mutex::new(Self {
             allow_list,

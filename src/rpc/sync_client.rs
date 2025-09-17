@@ -32,12 +32,11 @@ impl SyncClient {
     pub fn send_msg(
         &self,
         from_id: u8,
-        from_port: u16,
         dest: Identifier,
         msg: String,
     ) -> Result<bool, BrokerError> {
         self.rt
-            .block_on(self.client.async_send_msg(from_id, from_port, dest, msg))
+            .block_on(self.client.async_send_msg(from_id, dest, msg))
     }
 
     pub fn get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {

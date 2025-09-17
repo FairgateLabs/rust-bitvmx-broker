@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr},
     str::FromStr,
 };
 
@@ -11,32 +11,39 @@ pub type PubkHash = String;
 pub struct Identifier {
     pub pubkey_hash: PubkHash,
     pub id: Option<u8>, // For internal services. `None` represents a wildcard '*'
-    pub address: SocketAddr,
+    pub ip: IpAddr,
 }
 
 impl Identifier {
-    pub fn new(pubkey_hash: PubkHash, id: u8, address: SocketAddr) -> Self {
+    pub fn new(pubkey_hash: PubkHash, id: u8, ip: IpAddr) -> Self {
         Identifier {
             pubkey_hash,
             id: Some(id),
-            address,
+            ip,
         }
     }
-    pub fn new_local(pubkey_hash: PubkHash, id: u8, port: u16) -> Self {
+    pub fn new_local(pubkey_hash: PubkHash, id: u8) -> Self {
         Identifier {
             pubkey_hash,
             id: Some(id),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        }
+    }
+
+    pub fn storage_key(&self) -> String {
+        match self.id {
+            Some(id) => format!("{}_{}", self.pubkey_hash, id),
+            None => format!("{}_*", self.pubkey_hash),
         }
     }
 }
 
-impl From<(String, Option<u8>, SocketAddr)> for Identifier {
-    fn from(tuple: (String, Option<u8>, SocketAddr)) -> Self {
+impl From<(String, Option<u8>, IpAddr)> for Identifier {
+    fn from(tuple: (String, Option<u8>, IpAddr)) -> Self {
         Identifier {
             pubkey_hash: tuple.0,
             id: tuple.1,
-            address: tuple.2,
+            ip: tuple.2,
         }
     }
 }
@@ -63,12 +70,12 @@ impl FromStr for Identifier {
             Some(id_parts[1].parse::<u8>().map_err(|e| e.to_string())?)
         };
 
-        let address = parts[1].parse::<SocketAddr>().map_err(|e| e.to_string())?;
+        let address = parts[1].parse::<IpAddr>().map_err(|e| e.to_string())?;
 
         Ok(Identifier {
             pubkey_hash,
             id,
-            address,
+            ip: address,
         })
     }
 }
@@ -79,6 +86,6 @@ impl std::fmt::Display for Identifier {
             Some(id) => id.to_string(),
             None => "*".to_string(),
         };
-        write!(f, "{}:{}@{}", self.pubkey_hash, id_str, self.address)
+        write!(f, "{}:{}@{}", self.pubkey_hash, id_str, self.ip)
     }
 }

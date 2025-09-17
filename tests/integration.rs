@@ -46,12 +46,11 @@ fn prepare_server(
         routing,
     )
     .unwrap();
-    let my_address = get_local_addr(port);
     let local = LocalChannel::new(
         Identifier {
             pubkey_hash: "local".to_string(),
             id: Some(0),
-            address: my_address,
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         },
         storage,
     );
@@ -88,12 +87,11 @@ fn prepare_server(
         allow_list.clone(),
         routing,
     );
-    let my_address = get_local_addr;
     let local = LocalChannel::new(
         Identifier {
             pubkey_hash: "local".to_string(),
             id: Some(0),
-            address: my_address,
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         },
         storage,
     );
@@ -104,14 +102,12 @@ fn prepare_client(
     server_port: u16,
     server_pubk_hash: &str,
     client_privk_pem: &str,
-    client_port: u16,
     allow_list: Arc<Mutex<AllowList>>,
 ) -> DualChannel {
     prepare_client_with_id(
         server_port,
         server_pubk_hash,
         client_privk_pem,
-        client_port,
         None,
         allow_list,
     )
@@ -121,7 +117,6 @@ fn prepare_client_with_id(
     server_port: u16,
     server_pubk_hash: &str,
     client_privk_pem: &str,
-    client_port: u16,
     id: Option<u8>,
     allow_list: Arc<Mutex<AllowList>>,
 ) -> DualChannel {
@@ -131,12 +126,11 @@ fn prepare_client_with_id(
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubk_hash.to_string(),
     );
-    let my_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), client_port);
     let user = DualChannel::new(
         &server_config,
         client_cert,
         id,
-        my_address,
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
         Some(allow_list),
     )
     .unwrap();
@@ -177,7 +171,7 @@ impl KeyPair {
         Identifier {
             pubkey_hash: self.pubk_hash.clone(),
             id: Some(self.id),
-            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), self.port),
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         }
     }
 }
@@ -259,20 +253,8 @@ fn test_channel() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client1.privk,
-        client1.port,
-        allow_list.clone(),
-    );
-    let user2 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client2.privk,
-        client2.port,
-        allow_list.clone(),
-    );
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
     user1
         .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
@@ -295,20 +277,8 @@ fn test_ack() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let _ = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client1.privk,
-        client1.port,
-        allow_list.clone(),
-    );
-    let _ = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client2.privk,
-        client2.port,
-        allow_list.clone(),
-    );
+    let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
     let client_config1 = BrokerConfig::new(
         port,
@@ -323,12 +293,7 @@ fn test_ack() {
     .unwrap();
 
     myclient
-        .send_msg(
-            client1.id,
-            client2.port,
-            client2.get_identifier(),
-            "Hello!".to_string(),
-        )
+        .send_msg(client1.id, client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
     assert_eq!(msg.msg, "Hello!");
@@ -356,20 +321,8 @@ fn test_reconnect() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let _ = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client1.privk,
-        client1.port,
-        allow_list.clone(),
-    );
-    let _ = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client2.privk,
-        client2.port,
-        allow_list.clone(),
-    );
+    let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
     let client_config1 = BrokerConfig::new(
         port,
@@ -384,12 +337,7 @@ fn test_reconnect() {
     .unwrap();
 
     myclient
-        .send_msg(
-            client1.id,
-            client2.port,
-            client2.get_identifier(),
-            "Hello!".to_string(),
-        )
+        .send_msg(client1.id, client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
     assert_eq!(msg.msg, "Hello!");
@@ -404,12 +352,7 @@ fn test_reconnect() {
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
     myclient
-        .send_msg(
-            client1.id,
-            client2.port,
-            client2.get_identifier(),
-            "World!".to_string(),
-        )
+        .send_msg(client1.id, client2.get_identifier(), "World!".to_string())
         .unwrap();
     let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
     assert_eq!(msg.msg, "World!");
@@ -430,20 +373,8 @@ fn test_stress_channel() {
     ]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client1.privk,
-        client1.port,
-        allow_list.clone(),
-    );
-    let user2 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client2.privk,
-        client2.port,
-        allow_list.clone(),
-    );
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
     for i in 0..1000 {
         println!("Sending: {}", i);
@@ -485,20 +416,8 @@ fn test_dinamic_allow_list() {
     let allow_list = create_allow_list(vec![server.get_identifier(), client1.get_identifier()]);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client1.privk,
-        client1.port,
-        allow_list.clone(),
-    );
-    let user2 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client2.privk,
-        client2.port,
-        allow_list.clone(),
-    );
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
     user1
         .send(client2.get_identifier(), "Hello!".to_string())
@@ -540,7 +459,6 @@ fn test_local_service_id() {
         port,
         &server.get_pkh(),
         &client1.privk,
-        client1.port,
         Some(client1.id),
         allow_list.clone(),
     );
@@ -548,7 +466,6 @@ fn test_local_service_id() {
         port,
         &server.get_pkh(),
         &client2.privk,
-        client2.port,
         Some(client2.id),
         allow_list.clone(),
     );
@@ -583,25 +500,13 @@ fn test_routing() {
         Identifier {
             pubkey_hash: client1.get_pkh(),
             id: None,
-            address: get_local_addr(port),
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         },
     ); // Wildcard
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
-    let user1 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client1.privk,
-        client1.port,
-        allow_list.clone(),
-    );
-    let user2 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client2.privk,
-        client2.port,
-        allow_list.clone(),
-    );
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
     // An error should occur because the routing table does not have a route for client1 to client2
     user1
@@ -651,7 +556,7 @@ fn test_integration() {
         Identifier {
             pubkey_hash: client3.get_pkh(),
             id: None,
-            address: get_local_addr(port),
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         }, // Wildcard (client2 and client3 have the same pubkey_hash)
     );
     routing.lock().unwrap().add_routes(
@@ -670,7 +575,6 @@ fn test_integration() {
         port,
         &server.get_pkh(),
         &client1.privk,
-        client1.port,
         Some(client1.id),
         allow_list.clone(),
     );
@@ -678,7 +582,6 @@ fn test_integration() {
         port,
         &server.get_pkh(),
         &client2.privk,
-        client2.port,
         Some(client2.id),
         allow_list.clone(),
     );
@@ -686,7 +589,6 @@ fn test_integration() {
         port,
         &server.get_pkh(),
         &client3.privk,
-        client3.port,
         Some(client3.id),
         allow_list.clone(),
     );
@@ -729,9 +631,9 @@ fn test_simple_channel() {
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
 
     let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
-    let (user1, client1) = DualChannel::new_simple(&server_config, 0, port).unwrap();
+    let (user1, client1) = DualChannel::new_simple(&server_config, 0).unwrap();
     let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
-    let (user2, client2) = DualChannel::new_simple(&server_config, 0, port).unwrap();
+    let (user2, client2) = DualChannel::new_simple(&server_config, 0).unwrap();
 
     user1.send(client2, "Hello!".to_string()).unwrap();
     let msg = user2.recv().unwrap().unwrap();
@@ -756,34 +658,15 @@ fn test_multiple_servers() {
     let (mut broker_server2, _) =
         prepare_server(port + 3, &server2.privk, allow_list.clone(), route_all());
 
-    let user1 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client11.privk,
-        client11.port,
-        allow_list.clone(),
-    );
-    let user2 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client12.privk,
-        client12.port,
-        allow_list.clone(),
-    );
+    let user1 = prepare_client(port, &server.get_pkh(), &client11.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client12.privk, allow_list.clone());
     let user3 = prepare_client(
         port + 3,
         &server2.get_pkh(),
         &client21.privk,
-        client21.port,
         allow_list.clone(),
     );
-    let user4 = prepare_client(
-        port + 3,
-        &server2.get_pkh(),
-        &client22.privk,
-        client22.port,
-        allow_list,
-    );
+    let user4 = prepare_client(port + 3, &server2.get_pkh(), &client22.privk, allow_list);
     user1
         .send(client12.get_identifier(), "Hello!".to_string())
         .unwrap();
@@ -813,13 +696,7 @@ fn test_local_channel() {
     ]);
     let (mut broker_server, local_channel) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(
-        port,
-        &server.get_pkh(),
-        &client1.privk,
-        client1.port,
-        allow_list.clone(),
-    );
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
 
     local_channel
         .send(client1.get_identifier(), "Hello!".to_string())
@@ -831,7 +708,7 @@ fn test_local_channel() {
         Identifier {
             pubkey_hash: "local".to_string(),
             id: Some(0),
-            address: get_local_addr(port),
+            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         }
     );
     broker_server.close();
@@ -867,8 +744,8 @@ fn test_readme_example() {
     // Create Client
     let client1_cert = Cert::new().unwrap();
     let client2_cert = Cert::new().unwrap();
-    let client1_identifier = Identifier::new_local(client1_cert.get_pubk_hash().unwrap(), 0, 10001);
-    let client2_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
+    let client1_identifier = Identifier::new_local(client1_cert.get_pubk_hash().unwrap(), 0);
+    let client2_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0);
 
     // Add clients to allow list
     allow_list
@@ -889,18 +766,12 @@ fn test_readme_example() {
         .unwrap()
         .add_route(client1_identifier.clone(), client2_identifier.clone());
 
-    let destination_identifier =
-        Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
+    let destination_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0);
 
     let client1 = SyncClient::new(&config, client1_cert, allow_list).unwrap();
 
     client1
-        .send_msg(
-            0,
-            10001,
-            destination_identifier.clone(),
-            "hello".to_string(),
-        )
+        .send_msg(0, destination_identifier.clone(), "hello".to_string())
         .unwrap();
     while let Some(msg) = client1
         .get_msg(destination_identifier.clone())

@@ -68,7 +68,6 @@ fn main() -> anyhow::Result<()> {
         Some(msg) => {
             let _ret = client.send_msg(
                 flags.from.clone().unwrap().id.unwrap_or(0),
-                flags.from.unwrap().address.port(),
                 flags.dest,
                 msg.clone(),
             );

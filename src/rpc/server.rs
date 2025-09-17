@@ -63,15 +63,13 @@ where
         self,
         _: context::Context,
         from_id: u8,
-        from_port: u16,
         dest: Identifier,
         msg: String,
     ) -> Result<bool, BrokerRpcError> {
-        let address = SocketAddr::new(self.client_address.ip(), from_port);
         let from = Identifier {
             pubkey_hash: self.client_pubkey_hash.clone(),
             id: Some(from_id),
-            address,
+            ip: self.client_address.ip(),
         };
         let allowed = {
             let routing = self.routing.lock_or_err("routing")?;
