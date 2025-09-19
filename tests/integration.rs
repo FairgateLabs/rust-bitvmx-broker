@@ -1,6 +1,10 @@
 use bitvmx_broker::{
     channel::channel::{DualChannel, LocalChannel},
-    identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
+    identification::{
+        allow_list::AllowList,
+        identifier::Identifier,
+        routing::{RoutingTable, WildCard},
+    },
     rpc::{
         errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
         BrokerConfig,
@@ -49,8 +53,7 @@ fn prepare_server(
     let local = LocalChannel::new(
         Identifier {
             pubkey_hash: "local".to_string(),
-            id: Some(0),
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            id: 0,
         },
         storage,
     );
@@ -90,7 +93,7 @@ fn prepare_server(
     let local = LocalChannel::new(
         Identifier {
             pubkey_hash: "local".to_string(),
-            id: Some(0),
+            id: 0,
             ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         },
         storage,
@@ -126,14 +129,7 @@ fn prepare_client_with_id(
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubk_hash.to_string(),
     );
-    let user = DualChannel::new(
-        &server_config,
-        client_cert,
-        id,
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        Some(allow_list),
-    )
-    .unwrap();
+    let user = DualChannel::new(&server_config, client_cert, id, allow_list).unwrap();
     user
 }
 
@@ -170,8 +166,7 @@ impl KeyPair {
     fn get_identifier(&self) -> Identifier {
         Identifier {
             pubkey_hash: self.pubk_hash.clone(),
-            id: Some(self.id),
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            id: self.id,
         }
     }
 }
@@ -491,17 +486,15 @@ fn test_routing() {
         client2.get_identifier(),
     ]);
     let routing = RoutingTable::new();
-    routing
-        .lock()
-        .unwrap()
-        .add_route(client2.get_identifier(), client1.get_identifier());
     routing.lock().unwrap().add_route(
         client2.get_identifier(),
-        Identifier {
-            pubkey_hash: client1.get_pkh(),
-            id: None,
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        },
+        client1.get_identifier(),
+        WildCard::No,
+    );
+    routing.lock().unwrap().add_route(
+        client2.get_identifier(),
+        client1.get_identifier(),
+        WildCard::To,
     ); // Wildcard
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
@@ -515,10 +508,11 @@ fn test_routing() {
     assert!(user2.recv().unwrap().is_none());
 
     // Now we add a route from client1 to client2, so the message should be delivered
-    routing
-        .lock()
-        .unwrap()
-        .add_route(client1.get_identifier(), client2.get_identifier());
+    routing.lock().unwrap().add_route(
+        client1.get_identifier(),
+        client2.get_identifier(),
+        WildCard::No,
+    );
     user1
         .send(client2.get_identifier(), "Hello!".to_string())
         .unwrap();
@@ -553,20 +547,18 @@ fn test_integration() {
     let routing = RoutingTable::new();
     routing.lock().unwrap().add_route(
         client1.get_identifier(),
-        Identifier {
-            pubkey_hash: client3.get_pkh(),
-            id: None,
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        }, // Wildcard (client2 and client3 have the same pubkey_hash)
+        client3.get_identifier(),
+        WildCard::To, // Wildcard (client2 and client3 have the same pubkey_hash)
     );
     routing.lock().unwrap().add_routes(
         client2.get_identifier(),
         vec![client1.get_identifier(), client3.get_identifier()],
     );
-    routing
-        .lock()
-        .unwrap()
-        .add_route(client3.get_identifier(), client1.get_identifier());
+    routing.lock().unwrap().add_route(
+        client3.get_identifier(),
+        client1.get_identifier(),
+        WildCard::No,
+    );
     // Not client3 to client2, so it should not be able to send messages to client2
 
     let (mut broker_server, _) =
@@ -707,8 +699,7 @@ fn test_local_channel() {
         msg.1,
         Identifier {
             pubkey_hash: "local".to_string(),
-            id: Some(0),
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            id: 0,
         }
     );
     broker_server.close();
@@ -744,8 +735,8 @@ fn test_readme_example() {
     // Create Client
     let client1_cert = Cert::new().unwrap();
     let client2_cert = Cert::new().unwrap();
-    let client1_identifier = Identifier::new_local(client1_cert.get_pubk_hash().unwrap(), 0);
-    let client2_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0);
+    let client1_identifier = Identifier::new(client1_cert.get_pubk_hash().unwrap(), 0);
+    let client2_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
 
     // Add clients to allow list
     allow_list
@@ -761,12 +752,13 @@ fn test_readme_example() {
         )
         .unwrap();
     // Add routing for clients
-    routing_table
-        .lock()
-        .unwrap()
-        .add_route(client1_identifier.clone(), client2_identifier.clone());
+    routing_table.lock().unwrap().add_route(
+        client1_identifier.clone(),
+        client2_identifier.clone(),
+        WildCard::No,
+    );
 
-    let destination_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0);
+    let destination_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
 
     let client1 = SyncClient::new(&config, client1_cert, allow_list).unwrap();
 

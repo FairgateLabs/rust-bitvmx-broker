@@ -59,8 +59,7 @@ impl BrokerConfig {
 
         let identifier = Identifier {
             pubkey_hash: pubk_hash.clone(),
-            id: Some(SERVER_ID),
-            ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            id: SERVER_ID,
         };
         Ok((
             Self {

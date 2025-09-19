@@ -66,11 +66,7 @@ fn main() -> anyhow::Result<()> {
 
     match &flags.msg {
         Some(msg) => {
-            let _ret = client.send_msg(
-                flags.from.clone().unwrap().id.unwrap_or(0),
-                flags.dest,
-                msg.clone(),
-            );
+            let _ret = client.send_msg(flags.from.clone().unwrap().id, flags.dest, msg.clone());
         }
         None => {
             while let Some(msg) = client.get_msg(flags.dest.clone()).unwrap_or(None) {

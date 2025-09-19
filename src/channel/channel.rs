@@ -7,10 +7,7 @@ use crate::{
         BrokerConfig, Message, StorageApi,
     },
 };
-use std::{
-    net::{IpAddr, Ipv4Addr},
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 pub struct DualChannel {
@@ -25,31 +22,28 @@ impl DualChannel {
         config: &BrokerConfig,
         my_cert: Cert,
         my_id: Option<u8>,
-        my_ip: IpAddr,
-        allow_list: Option<Arc<Mutex<AllowList>>>, // If it's None, the allow list will contain only the one in config
+        allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
-        let allow_list = match allow_list {
-            Some(al) => al,
-            None => {
-                let server_identifier = Identifier::new(config.get_pubk_hash(), 0, config.get_ip()); // ID is 0 for the server
-                AllowList::from_identifiers(vec![server_identifier]).map_err(|e| {
-                    BrokerError::Other(format!(
-                        "Failed to create allow list from config identifier: {}",
-                        e
-                    ))
-                })?
-            }
-        };
+        // let allow_list = match allow_list {
+        //     Some(al) => al,
+        //     None => {
+        //         let server_identifier = Identifier::new(config.get_pubk_hash(), 0); // ID is 0 for the server
+        //         AllowList::from_identifiers(vec![server_identifier]).map_err(|e| {
+        //             BrokerError::Other(format!(
+        //                 "Failed to create allow list from config identifier: {}",
+        //                 e
+        //             ))
+        //         })?
+        //     }
+        // };
         let client = SyncClient::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
-            id: Some(my_id.unwrap_or(0)), // Default to 0 if not provided
-            ip: my_ip,
+            id: my_id.unwrap_or(0), // Default to 0 if not provided
         };
         let dest_id = Identifier {
             pubkey_hash: config.get_pubk_hash(),
-            id: Some(config.get_id()),
-            ip: config.get_ip(),
+            id: config.get_id(),
         };
         Ok(Self {
             client,
@@ -64,18 +58,16 @@ impl DualChannel {
         my_id: u8,
     ) -> Result<(Self, Identifier), crate::rpc::errors::BrokerError> {
         let my_cert = Cert::new()?;
-        let my_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let allow_list = AllowList::new();
         allow_list
             .lock_or_err::<BrokerError>("allow_llist")?
             .allow_all();
         let my_identifier = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
-            id: Some(my_id),
-            ip: my_ip,
+            id: my_id,
         };
         Ok((
-            Self::new(config, my_cert, Some(my_id), my_ip, Some(allow_list))?,
+            Self::new(config, my_cert, Some(my_id), allow_list)?,
             my_identifier,
         ))
     }
@@ -85,13 +77,13 @@ impl DualChannel {
         dest: Identifier,
         msg: String,
     ) -> Result<bool, crate::rpc::errors::BrokerError> {
-        self.client.send_msg(self.my_id.id.unwrap_or(0), dest, msg)
+        self.client.send_msg(self.my_id.id, dest, msg)
     }
 
     // Dest is the identifier in config
     pub fn send_server(&self, msg: String) -> Result<bool, crate::rpc::errors::BrokerError> {
         self.client
-            .send_msg(self.my_id.id.unwrap_or(0), self.dest_id.clone(), msg)
+            .send_msg(self.my_id.id, self.dest_id.clone(), msg)
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, crate::rpc::errors::BrokerError> {
@@ -120,14 +112,11 @@ where
     pub fn new_simple(pubk_hash: String, storage: Arc<Mutex<S>>) -> Self {
         let my_id = Identifier {
             pubkey_hash: pubk_hash,
-            id: Some(0), // Default to 0 if not provided
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            id: 0, // Default to 0 if not provided
         };
         Self::new(my_id, storage)
     }
-    /*  fn get(&mut self, dest: String) -> Option<Message>;
-    fn insert(&mut self, from: String, dest: String, msg: String);
-    fn remove(&mut self, dest: String, uid: u64) -> bool;*/
+
     pub fn send(&self, dest: Identifier, msg: String) -> Result<bool, BrokerError> {
         self.storage
             .lock_or_err::<BrokerError>("storage")?

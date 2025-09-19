@@ -11,7 +11,7 @@ use futures::StreamExt;
 use rustls::ServerConfig;
 use std::{
     future::Future,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr},
     str::FromStr,
     sync::{Arc, Mutex},
 };
@@ -31,7 +31,6 @@ use tracing::{error, info, warn};
 #[derive(Clone)]
 pub struct BrokerServer<S: StorageApi> {
     client_pubkey_hash: String,
-    client_address: SocketAddr,
     storage: Arc<Mutex<S>>,
     routing: Arc<Mutex<RoutingTable>>,
 }
@@ -42,13 +41,11 @@ where
 {
     fn new(
         client_pubkey_hash: String,
-        client_address: SocketAddr,
         storage: Arc<Mutex<S>>,
         routing: Arc<Mutex<RoutingTable>>,
     ) -> Self {
         Self {
             client_pubkey_hash,
-            client_address,
             storage,
             routing,
         }
@@ -68,8 +65,7 @@ where
     ) -> Result<bool, BrokerRpcError> {
         let from = Identifier {
             pubkey_hash: self.client_pubkey_hash.clone(),
-            id: Some(from_id),
-            ip: self.client_address.ip(),
+            id: from_id,
         };
         let allowed = {
             let routing = self.routing.lock_or_err("routing")?;
@@ -232,7 +228,7 @@ where
                             let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
                             let transport = serde_transport::new(framed, Json::default());
                             server::BaseChannel::with_defaults(transport)
-                                .execute(BrokerServer::new(hex_fingerprint, addr, storage, routing).serve())
+                                .execute(BrokerServer::new(hex_fingerprint, storage, routing).serve())
                                 .for_each(spawn)
                                 .await;
 

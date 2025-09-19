@@ -1,3 +1,4 @@
+use bitvmx_broker::identification::routing::WildCard;
 use bitvmx_broker::identification::{
     allow_list::AllowList, identifier::Identifier, routing::RoutingTable,
 };
@@ -72,7 +73,10 @@ fn main() -> anyhow::Result<()> {
                             continue;
                         }
                     };
-                    routing_table.lock().unwrap().add_route(from, to);
+                    routing_table
+                        .lock()
+                        .unwrap()
+                        .add_route(from, to, WildCard::No);
                     println!("Added route {} -> {}", from_str, to_str);
                 } else {
                     println!("Usage: route <from> <to>");
