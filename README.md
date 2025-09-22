@@ -62,7 +62,7 @@ fn main() {
     let allow_list = AllowList::new();
     let routing_table = RoutingTable::new();
     
-    let config = BrokerConfig::new(10000, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), server_pubkey_hash, None).unwrap();
+    let config = BrokerConfig::new(10000, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), server_pubkey_hash).unwrap();
     let server = BrokerSync::new(&config, storage.clone(), server_cert, allow_list, routing_table);
     // Start the server...
 }
@@ -78,11 +78,11 @@ fn main() {
     let client2_cert = Cert::new().unwrap();
 
     let destination_identifier =
-        Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
+        Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
 
     let client1 = Client::new(&config, client1_cert, allow_list).unwrap();
 
-    client1.send_msg(0, 10001, destination_identifier.clone(), "hello".to_string()).unwrap();
+    client1.send_msg(0, destination_identifier.clone(), "hello".to_string()).unwrap();
     while let Some(msg) = client1.get_msg(destination_identifier.clone()).unwrap_or(None)
     {
         println!("{:?}", msg);
@@ -107,15 +107,15 @@ fn main() {
     let addrs = vec![IpAddr::V4(Ipv4Addr::LOCALHOST); certs.len()];
     let allow_list = AllowList::from_certs(certs, addrs).unwrap();
     let server_pubkey_hash = server_cert.get_pubk_hash().unwrap();
-    let client2_identifier = Identifier::new_local(client2_cert.get_pubk_hash().unwrap(), 0, 10002);
+    let client2_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
 
     let client1_addr = SocketAddr::new(local_addr, 10001);
     let client2_addr = SocketAddr::new(local_addr, 10002);
 
-    let server_config = BrokerConfig::new(10000, Some(local_addr), server_pubkey_hash, None).unwrap();
+    let server_config = BrokerConfig::new(10000, Some(local_addr), server_pubkey_hash).unwrap();
     
-    let user_1 = DualChannel::new(&server_config, client1_cert, None, client1_addr, allow_list);
-    let user_2 = DualChannel::new(&server_config, client2_cert, None, client2_addr, allow_list);
+    let user_1 = DualChannel::new(&server_config, client1_cert, 0, allow_list);
+    let user_2 = DualChannel::new(&server_config, client2_cert, 0, allow_list);
 
     user_1.send(client2_identifier, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();

@@ -80,21 +80,19 @@ fn prepare_server(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert.get_pubk_hash().unwrap(),
-        None,
-    )
-    .unwrap();
+    );
     let server = BrokerSync::new(
         &server_config,
         storage.clone(),
         server_cert,
         allow_list.clone(),
         routing,
-    );
+    )
+    .unwrap();
     let local = LocalChannel::new(
         Identifier {
             pubkey_hash: "local".to_string(),
             id: 0,
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         },
         storage,
     );
