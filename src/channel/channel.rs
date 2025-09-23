@@ -24,18 +24,6 @@ impl DualChannel {
         my_id: Option<u8>,
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
-        // let allow_list = match allow_list {
-        //     Some(al) => al,
-        //     None => {
-        //         let server_identifier = Identifier::new(config.get_pubk_hash(), 0); // ID is 0 for the server
-        //         AllowList::from_identifiers(vec![server_identifier]).map_err(|e| {
-        //             BrokerError::Other(format!(
-        //                 "Failed to create allow list from config identifier: {}",
-        //                 e
-        //             ))
-        //         })?
-        //     }
-        // };
         let client = SyncClient::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,

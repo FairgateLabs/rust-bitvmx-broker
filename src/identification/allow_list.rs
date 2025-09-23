@@ -12,8 +12,8 @@ use tracing::info;
 
 #[derive(Debug)]
 pub struct AllowList {
-    allow_list: HashMap<PubkHash, IpAddr>, // (pubkey_hash, IpAddr)
-    allow_all: bool,                       // if true, all pubkey_hashes are allowed
+    allow_list: HashMap<PubkHash, Option<IpAddr>>, // (pubkey_hash, IpAddr). None means wildcard for IP
+    allow_all: bool,                               // if true, all pubkey_hashes are allowed
 }
 
 impl AllowList {
@@ -31,12 +31,16 @@ impl AllowList {
                 allow_all: true,
             })));
         }
-        let allow_list: HashMap<PubkHash, IpAddr> = serde_yaml::from_str(&content)?;
+        Self::parse_yaml(&content)
+    }
+    fn parse_yaml(yaml_str: &str) -> Result<Arc<Mutex<Self>>, IdentificationError> {
+        let allow_list: HashMap<PubkHash, Option<IpAddr>> = serde_yaml::from_str(&yaml_str)?;
         Ok(Arc::new(Mutex::new(Self {
             allow_list,
             allow_all: false,
         })))
     }
+
     pub fn from_certs(
         certs: Vec<Cert>,
         addrs: Vec<IpAddr>,
@@ -44,7 +48,7 @@ impl AllowList {
         let mut allow_list = HashMap::new();
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             let pubkey_hash = cert.get_pubk_hash()?;
-            allow_list.insert(pubkey_hash, addr);
+            allow_list.insert(pubkey_hash, Some(addr));
         }
         Ok(Arc::new(Mutex::new(Self {
             allow_list,
@@ -60,11 +64,14 @@ impl AllowList {
             return true;
         }
         match self.allow_list.get(pubk_hash) {
-            Some(stored_addr) => *stored_addr == addr,
+            Some(stored_addr) => match stored_addr {
+                Some(a) => *a == addr,
+                None => true,
+            },
             None => false,
         }
     }
-    pub fn is_allowed_by_fingerprint(&self, pubk_hash: &str) -> bool {
+    pub fn is_allowed_by_fingerprint(&self, pubk_hash: &PubkHash) -> bool {
         if self.allow_all {
             return true;
         }
@@ -73,10 +80,15 @@ impl AllowList {
             .any(|pubkey_hash| pubkey_hash == pubk_hash)
     }
 
-    pub fn add(&mut self, pubk_hash: String, addr: IpAddr) {
-        self.allow_list.insert(pubk_hash, addr);
+    pub fn add(&mut self, pubk_hash: PubkHash, addr: IpAddr) {
+        self.allow_list.insert(pubk_hash, Some(addr));
     }
-    pub fn remove(&mut self, pubk_hash: &str) {
+
+    pub fn add_wildcard(&mut self, pubk_hash: PubkHash) {
+        self.allow_list.insert(pubk_hash, None);
+    }
+
+    pub fn remove(&mut self, pubk_hash: &PubkHash) {
         self.allow_list.remove(pubk_hash);
     }
 
@@ -87,7 +99,7 @@ impl AllowList {
     }
     pub fn add_by_cert(&mut self, cert: &Cert, addr: IpAddr) -> Result<(), IdentificationError> {
         let pubkey_hash = cert.get_pubk_hash()?;
-        self.allow_list.insert(pubkey_hash, addr);
+        self.allow_list.insert(pubkey_hash, Some(addr));
         Ok(())
     }
     pub fn add_by_certs(
@@ -111,5 +123,78 @@ impl AllowList {
     pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, IdentificationError> {
         let cert = Cert::new_with_privk(privk)?;
         Ok(cert.get_pubk_hash()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::identification::allow_list::AllowList;
+    use std::{fs, net::IpAddr};
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_allowed() {
+        let local_addr = addr_from_str("127.0.0.1").unwrap();
+        let allow_list = AllowList::new();
+        let mut allow_list = allow_list.lock().unwrap();
+        allow_list.add("hash1".to_string(), local_addr);
+        allow_list.add_wildcard("hash2".to_string());
+        assert!(allow_list.is_allowed(&"hash1".to_string(), local_addr));
+        assert!(allow_list.is_allowed(&"hash2".to_string(), local_addr));
+        assert!(!allow_list.is_allowed(&"hash1".to_string(), addr_from_str("127.0.0.2").unwrap()));
+        assert!(!allow_list.is_allowed(&"hash3".to_string(), local_addr));
+        assert!(allow_list.is_allowed_by_fingerprint(&"hash1".to_string()));
+        assert!(!allow_list.is_allowed_by_fingerprint(&"hash3".to_string()));
+        allow_list.remove(&"hash1".to_string());
+        assert!(!allow_list.is_allowed_by_fingerprint(&"hash1".to_string()));
+        assert!(!allow_list.is_allowed(&"hash".to_string(), local_addr));
+    }
+
+    #[test]
+    fn test_allow_all_flag() {
+        let allow_list = AllowList::new();
+        let mut allow_list = allow_list.lock().unwrap();
+        allow_list.allow_all();
+        assert!(allow_list.allow_all);
+        assert!(allow_list.is_allowed(&"anything".to_string(), addr_from_str("127.0.0.1").unwrap()));
+    }
+
+    #[test]
+    fn test_from_file_allow_all() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("allowlist.yaml");
+        fs::write(&file_path, "allow_all").unwrap();
+        let allow_list = AllowList::from_file(file_path.to_str().unwrap()).unwrap();
+        let allow_list = allow_list.lock().unwrap();
+        assert!(allow_list.allow_all);
+    }
+
+    #[test]
+    fn test_generate_yaml_and_reload() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("out.yaml");
+
+        let allow_list = AllowList::new();
+        {
+            let mut allow_list = allow_list.lock().unwrap();
+            allow_list.add("hashY".to_string(), addr_from_str("127.0.0.1").unwrap());
+            allow_list
+                .generate_yaml(file_path.to_str().unwrap())
+                .unwrap();
+        }
+
+        let allow_list2 = AllowList::from_file(file_path.to_str().unwrap()).unwrap();
+        let allow_list2 = allow_list2.lock().unwrap();
+        assert!(allow_list2.is_allowed(&"hashY".to_string(), addr_from_str("127.0.0.1").unwrap()));
+    }
+
+    #[test]
+    fn test_format() {
+        let yaml = vec!["pubk1: 127.0.0.1", "pubk2: ~"].join("\n");
+        AllowList::parse_yaml(&yaml).expect("Failed to parse allow list");
+    }
+
+    fn addr_from_str(s: &str) -> Option<IpAddr> {
+        s.parse::<IpAddr>().ok()
     }
 }

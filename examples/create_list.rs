@@ -1,4 +1,4 @@
-use bitvmx_broker::identification::routing::WildCard;
+use bitvmx_broker::identification::routing::{RouteIdentifier, WildCard};
 use bitvmx_broker::identification::{
     allow_list::AllowList, identifier::Identifier, routing::RoutingTable,
 };
@@ -45,38 +45,68 @@ fn main() -> anyhow::Result<()> {
         let mut parts = line.split_whitespace();
         match parts.next() {
             Some("allow") => {
-                if let (Some(pubk), Some(ip_str)) = (parts.next(), parts.next()) {
-                    match IpAddr::from_str(ip_str) {
-                        Ok(ip) => {
-                            allowlist.lock().unwrap().add(pubk.to_string(), ip);
-                            println!("Added {} -> {}", pubk, ip);
+                if let Some(pubk) = parts.next() {
+                    match parts.next() {
+                        Some(ip_str) => {
+                            if ip_str == "~" {
+                                allowlist.lock().unwrap().add_wildcard(pubk.to_string());
+                                println!("Added {}:~", pubk);
+                            } else {
+                                match IpAddr::from_str(ip_str) {
+                                    Ok(ip) => {
+                                        allowlist.lock().unwrap().add(pubk.to_string(), ip);
+                                        println!("Added {}:{}", pubk, ip);
+                                    }
+                                    Err(_) => println!("Invalid IP address"),
+                                }
+                            }
                         }
-                        Err(_) => println!("Invalid IP address"),
+                        None => {
+                            allowlist.lock().unwrap().add_wildcard(pubk.to_string());
+                            println!("Added {}:~", pubk);
+                        }
                     }
                 } else {
-                    println!("Usage: allow <pubkey_hash> <ip>");
+                    println!("Usage: allow <pubkey_hash> [ip|~]");
                 }
             }
             Some("route") => {
                 if let (Some(from_str), Some(to_str)) = (parts.next(), parts.next()) {
-                    let from = match Identifier::from_str(from_str) {
+                    let from = match RouteIdentifier::from_str(from_str) {
                         Ok(val) => val,
                         Err(e) => {
                             println!("Invalid 'from' identifier: {}", e);
                             continue;
                         }
                     };
-                    let to = match Identifier::from_str(to_str) {
+                    let to = match RouteIdentifier::from_str(to_str) {
                         Ok(val) => val,
                         Err(e) => {
                             println!("Invalid 'to' identifier: {}", e);
                             continue;
                         }
                     };
+
+                    // determine wildcard mode
+                    let wild_card = match (from.id.is_none(), to.id.is_none()) {
+                        (false, false) => WildCard::No,
+                        (true, false) => WildCard::From,
+                        (false, true) => WildCard::To,
+                        (true, true) => WildCard::Both,
+                    };
+
+                    // unwrap Option<u8> safely since identifiers with None are handled by wildcards
+                    let from_id = from.id.unwrap_or(0);
+                    let to_id = to.id.unwrap_or(0);
+
+                    let from_ident = Identifier::new(from.pubkey_hash.clone(), from_id);
+                    let to_ident = Identifier::new(to.pubkey_hash.clone(), to_id);
+
                     routing_table
                         .lock()
                         .unwrap()
-                        .add_route(from, to, WildCard::No);
+                        .add_route(from_ident, to_ident, wild_card);
+
                     println!("Added route {} -> {}", from_str, to_str);
                 } else {
                     println!("Usage: route <from> <to>");
