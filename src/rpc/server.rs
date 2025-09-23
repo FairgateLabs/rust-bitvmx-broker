@@ -143,11 +143,11 @@ where
 
     let cancellation_token = CancellationToken::new();
     let mut connection_tasks: Vec<JoinHandle<()>> = Vec::new();
+    info!("Server started, waiting for TLS connections...");
 
     tokio::select! {
         _ = async {
             loop {
-                info!("Server started, waiting for TLS connections...");
                 let (stream, addr) = match listener.accept().await {
                     Ok(conn) => conn,
                     Err(e) => {
