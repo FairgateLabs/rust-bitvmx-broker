@@ -85,13 +85,13 @@ impl FromMutexError for BrokerRpcError {
 }
 
 pub trait MutexExt<T> {
-    fn lock_or_err<E>(&self, context: &'static str) -> Result<MutexGuard<T>, E>
+    fn lock_or_err<E>(&self, context: &'static str) -> Result<MutexGuard<'_, T>, E>
     where
         E: FromMutexError;
 }
 
 impl<T> MutexExt<T> for Mutex<T> {
-    fn lock_or_err<E>(&self, context: &'static str) -> Result<MutexGuard<T>, E>
+    fn lock_or_err<E>(&self, context: &'static str) -> Result<MutexGuard<'_, T>, E>
     where
         E: FromMutexError,
     {
@@ -100,7 +100,7 @@ impl<T> MutexExt<T> for Mutex<T> {
 }
 
 impl<T> MutexExt<T> for Arc<Mutex<T>> {
-    fn lock_or_err<E>(&self, context: &'static str) -> Result<MutexGuard<T>, E>
+    fn lock_or_err<E>(&self, context: &'static str) -> Result<MutexGuard<'_, T>, E>
     where
         E: FromMutexError,
     {
