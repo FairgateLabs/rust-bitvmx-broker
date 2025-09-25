@@ -1,11 +1,13 @@
+use crate::{
+    identification::identifier::Identifier,
+    rpc::{Message, StorageApi},
+};
 use std::collections::{HashMap, VecDeque};
-
-use crate::rpc::{Message, StorageApi};
 
 #[derive(Clone, Debug)]
 pub struct MemStorage {
     uid: u64,
-    data: HashMap<u32, VecDeque<Message>>,
+    data: HashMap<Identifier, VecDeque<Message>>,
 }
 
 impl MemStorage {
@@ -18,11 +20,11 @@ impl MemStorage {
 }
 
 impl StorageApi for MemStorage {
-    fn get(&mut self, dest: u32) -> Option<Message> {
+    fn get(&mut self, dest: Identifier) -> Option<Message> {
         self.data.get_mut(&dest)?.front().cloned()
     }
 
-    fn remove(&mut self, dest: u32, uid: u64) -> bool {
+    fn remove(&mut self, dest: Identifier, uid: u64) -> bool {
         let data = self.data.get_mut(&dest);
         if let Some(data) = data {
             if data.front().map(|m| m.uid) == Some(uid) {
@@ -36,7 +38,7 @@ impl StorageApi for MemStorage {
         }
     }
 
-    fn insert(&mut self, from: u32, dest: u32, msg: String) {
+    fn insert(&mut self, from: Identifier, dest: Identifier, msg: String) {
         self.uid += 1;
         let msg = Message {
             uid: self.uid,

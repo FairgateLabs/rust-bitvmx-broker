@@ -1,41 +1,103 @@
-use std::net::IpAddr;
-
+use crate::{
+    identification::identifier::Identifier,
+    rpc::{
+        errors::{BrokerError, BrokerRpcError},
+        tls_helper::{init_tls, Cert},
+    },
+};
 use serde::{Deserialize, Serialize};
-
-pub mod async_client;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub mod client;
 pub mod errors;
 pub mod server;
+pub mod sync_client;
 pub mod sync_server;
+pub mod tls_helper;
+
+const SERVER_ID: u8 = 0; // Default ID for the server
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
     pub uid: u64,
-    pub from: u32,
+    pub from: Identifier,
     pub msg: String,
 }
 
 #[tarpc::service]
 pub(crate) trait Broker {
-    async fn send(from: u32, dest: u32, msg: String) -> bool;
-    async fn get(dest: u32) -> Option<Message>;
-    async fn ack(dest: u32, uid: u64) -> bool;
+    async fn send(from_id: u8, dest: Identifier, msg: String) -> Result<bool, BrokerRpcError>;
+    async fn get(dest: Identifier) -> Result<Option<Message>, BrokerRpcError>;
+    async fn ack(dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError>;
+    async fn ping() -> bool;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BrokerConfig {
-    pub port: u16,
-    pub ip: Option<IpAddr>,
+    port: u16,
+    ip: Option<IpAddr>,
+    pubk_hash: String,
 }
 
 impl BrokerConfig {
-    pub fn new(port: u16, ip: Option<IpAddr>) -> Self {
-        Self { port, ip }
+    pub fn new(port: u16, ip: Option<IpAddr>, pubk_hash: String) -> Self {
+        init_tls(); // Ensure the CryptoProvider is initialized
+                    //TODO: remove
+        Self {
+            port,
+            ip,
+            pubk_hash,
+        }
+    }
+
+    // Do not use in production, this is for testing purposes
+    pub fn new_only_address(
+        port: u16,
+        ip: Option<IpAddr>,
+    ) -> Result<(Self, Identifier, Cert), BrokerError> {
+        let cert = Cert::new()?;
+        let pubk_hash = cert.get_pubk_hash()?;
+
+        let identifier = Identifier {
+            pubkey_hash: pubk_hash.clone(),
+            id: SERVER_ID,
+        };
+        Ok((
+            Self {
+                port,
+                ip,
+                pubk_hash,
+            },
+            identifier,
+            cert,
+        ))
+    }
+
+    pub fn get_pubk_hash(&self) -> String {
+        self.pubk_hash.clone()
+    }
+
+    pub fn get_id(&self) -> u8 {
+        SERVER_ID
+    }
+
+    pub fn get_port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn get_address(&self) -> SocketAddr {
+        SocketAddr::new(
+            self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            self.port,
+        )
+    }
+
+    pub fn get_ip(&self) -> IpAddr {
+        self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
     }
 }
 
 pub trait StorageApi {
-    fn get(&mut self, dest: u32) -> Option<Message>;
-    fn insert(&mut self, from: u32, dest: u32, msg: String);
-    fn remove(&mut self, dest: u32, uid: u64) -> bool;
+    fn get(&mut self, dest: Identifier) -> Option<Message>;
+    fn insert(&mut self, from: Identifier, dest: Identifier, msg: String);
+    fn remove(&mut self, dest: Identifier, uid: u64) -> bool;
 }

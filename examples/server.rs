@@ -1,4 +1,6 @@
 use std::{
+    fs,
+    net::{IpAddr, Ipv4Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -6,9 +8,18 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+
+#[cfg(feature = "storagebackend")]
+use broker_storage::BrokerStorage;
+#[cfg(feature = "storagebackend")]
+use storage_backend::{storage::Storage, storage_config::StorageConfig};
+
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
-use bitvmx_broker::rpc::{sync_server::BrokerSync, BrokerConfig};
+use bitvmx_broker::{
+    identification::{allow_list::AllowList, routing::RoutingTable},
+    rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
+};
 use clap::Parser;
 use tracing::info;
 
@@ -50,25 +61,29 @@ fn wait_ctrl() {
 fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
-    let config = BrokerConfig {
-        port: flags.port,
-        ip: None,
-    };
+    let privk = fs::read_to_string("certs/services.key").expect("Failed to read private key file");
+    let cert = Cert::new_with_privk(&privk).unwrap();
+    let allow_list =
+        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
+    let routing = RoutingTable::new();
+    routing.lock().unwrap().allow_all();
+    let config = BrokerConfig::new(flags.port, None, cert.get_pubk_hash().unwrap());
 
     #[cfg(not(feature = "storagebackend"))]
     let storage = Arc::new(Mutex::new(
         bitvmx_broker::broker_memstorage::MemStorage::new(),
     ));
     #[cfg(feature = "storagebackend")]
-    let backend =
-        storage_backend::storage::Storage::new_with_path(&std::path::PathBuf::from("storage.db"))
-            .unwrap();
-    #[cfg(feature = "storagebackend")]
-    let storage = Arc::new(Mutex::new(
-        bitvmx_broker::broker_storage::BrokerStorage::new(Arc::new(Mutex::new(backend))),
-    ));
+    let storage = {
+        let storage_path = "storage.db";
+        let config = StorageConfig::new(storage_path.to_string(), None);
+        let broker_backend = Storage::new(&config).unwrap();
+        let broker_backend = Arc::new(Mutex::new(broker_backend));
+        Arc::new(Mutex::new(BrokerStorage::new(broker_backend)))
+    };
 
-    let mut server = BrokerSync::new(&config, storage.clone());
+    let mut server =
+        BrokerSync::new(&config, storage.clone(), cert, allow_list.clone(), routing).unwrap();
 
     wait_ctrl();
     server.close();

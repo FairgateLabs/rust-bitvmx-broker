@@ -1,6 +1,13 @@
-use bitvmx_broker::rpc::{client::Client, BrokerConfig};
+use bitvmx_broker::{
+    identification::{allow_list::AllowList, identifier::Identifier},
+    rpc::{sync_client::SyncClient, tls_helper::Cert, BrokerConfig},
+};
 use clap::Parser;
-use std::{net::IpAddr, thread::sleep, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    thread::sleep,
+    time::Duration,
+};
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 pub fn init_tracing() -> anyhow::Result<()> {
@@ -28,11 +35,11 @@ struct Flags {
 
     /// Sets the id to send the message from.
     #[clap(long)]
-    from: Option<u32>,
+    from: Option<Identifier>,
 
     /// Sets the id to send the message to.
     #[clap(long)]
-    dest: u32,
+    dest: Identifier,
 
     /// Message to send.
     #[clap(long)]
@@ -43,16 +50,28 @@ fn main() -> anyhow::Result<()> {
     let flags = Flags::parse();
     init_tracing()?;
 
-    let client = Client::new(&BrokerConfig::new(flags.port, Some(flags.ip_addr)));
+    let cert = Cert::new().unwrap();
+    let allow_list =
+        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
+    let client = SyncClient::new(
+        &BrokerConfig::new(
+            flags.port,
+            Some(flags.ip_addr),
+            cert.get_pubk_hash().unwrap(),
+        ),
+        cert,
+        allow_list,
+    )
+    .unwrap();
 
     match &flags.msg {
         Some(msg) => {
-            let _ret = client.send_msg(flags.from.unwrap(), flags.dest, msg.clone());
+            let _ret = client.send_msg(flags.from.clone().unwrap().id, flags.dest, msg.clone());
         }
         None => {
-            while let Some(msg) = client.get_msg(flags.dest).unwrap_or(None) {
+            while let Some(msg) = client.get_msg(flags.dest.clone()).unwrap_or(None) {
                 println!("{:?}", msg);
-                client.ack(flags.dest, msg.uid).unwrap();
+                client.ack(flags.dest.clone(), msg.uid).unwrap();
             }
         }
     }
