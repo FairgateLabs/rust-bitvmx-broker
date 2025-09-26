@@ -62,10 +62,10 @@ impl DualChannel {
 
     pub fn send(
         &self,
-        dest: Identifier,
+        dest: &Identifier,
         msg: String,
     ) -> Result<bool, crate::rpc::errors::BrokerError> {
-        self.client.send_msg(self.my_id.id, dest, msg)
+        self.client.send_msg(self.my_id.id, dest.clone(), msg)
     }
 
     // Dest is the identifier in config
@@ -105,10 +105,12 @@ where
         Self::new(my_id, storage)
     }
 
-    pub fn send(&self, dest: Identifier, msg: String) -> Result<bool, BrokerError> {
-        self.storage
-            .lock_or_err::<BrokerError>("storage")?
-            .insert(self.my_id.clone(), dest, msg);
+    pub fn send(&self, dest: &Identifier, msg: String) -> Result<bool, BrokerError> {
+        self.storage.lock_or_err::<BrokerError>("storage")?.insert(
+            self.my_id.clone(),
+            dest.clone(),
+            msg,
+        );
         Ok(true)
     }
 
