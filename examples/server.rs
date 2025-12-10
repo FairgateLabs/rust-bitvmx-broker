@@ -10,6 +10,8 @@ use std::{
 };
 
 #[cfg(feature = "storagebackend")]
+use bitvmx_broker::broker_storage;
+#[cfg(feature = "storagebackend")]
 use broker_storage::BrokerStorage;
 #[cfg(feature = "storagebackend")]
 use storage_backend::{storage::Storage, storage_config::StorageConfig};

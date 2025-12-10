@@ -249,7 +249,7 @@ fn test_channel() {
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -371,7 +371,7 @@ fn test_stress_channel() {
 
     for i in 0..1000 {
         println!("Sending: {}", i);
-        let send_ok = user1.send(client2.get_identifier(), "Hello!".to_string());
+        let send_ok = user1.send(&client2.get_identifier(), "Hello!".to_string());
         if send_ok.is_err() {
             println!("Error: {:?}", send_ok);
         }
@@ -413,7 +413,7 @@ fn test_dinamic_allow_list() {
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap_err();
     assert!(matches!(msg, BrokerError::RpcError(RpcError::Channel(_))));
@@ -423,7 +423,7 @@ fn test_dinamic_allow_list() {
         .unwrap()
         .add(client2.get_pkh(), IpAddr::V4(Ipv4Addr::LOCALHOST));
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
 
@@ -463,7 +463,7 @@ fn test_local_service_id() {
         allow_list.clone(),
     );
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -501,7 +501,7 @@ fn test_routing() {
 
     // An error should occur because the routing table does not have a route for client1 to client2
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     assert!(user2.recv().unwrap().is_none());
 
@@ -512,7 +512,7 @@ fn test_routing() {
         WildCard::No,
     );
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -585,7 +585,7 @@ fn test_integration() {
 
     // user1 and user2 should be able to communicate
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -593,7 +593,7 @@ fn test_integration() {
 
     // user3 and user1 should be able to communicate
     user3
-        .send(client1.get_identifier(), "Hello from client3!".to_string())
+        .send(&client1.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
     let msg = user1.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello from client3!");
@@ -601,7 +601,7 @@ fn test_integration() {
 
     // user3 should not be able to send messages to user2
     user3
-        .send(client2.get_identifier(), "Hello from client3!".to_string())
+        .send(&client2.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
     assert!(user2.recv().unwrap().is_none());
 
@@ -625,7 +625,7 @@ fn test_simple_channel() {
     let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
     let (user2, client2) = DualChannel::new_simple(&server_config, 0).unwrap();
 
-    user1.send(client2, "Hello!".to_string()).unwrap();
+    user1.send(&client2, "Hello!".to_string()).unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1);
@@ -658,10 +658,13 @@ fn test_multiple_servers() {
     );
     let user4 = prepare_client(port + 3, &server2.get_pkh(), &client22.privk, allow_list);
     user1
-        .send(client12.get_identifier(), "Hello!".to_string())
+        .send(&client12.get_identifier(), "Hello!".to_string())
         .unwrap();
     user3
-        .send(client22.get_identifier(), "Hello from server2!".to_string())
+        .send(
+            &client22.get_identifier(),
+            "Hello from server2!".to_string(),
+        )
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     let msg2 = user4.recv().unwrap().unwrap();
@@ -689,7 +692,7 @@ fn test_local_channel() {
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
 
     local_channel
-        .send(client1.get_identifier(), "Hello!".to_string())
+        .send(&client1.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user1.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -708,8 +711,23 @@ fn test_local_channel() {
 fn test_readme_example() {
     let port = 10000;
     cleanup_storage(port, 3);
-    let storage = Arc::new(Mutex::new(MemStorage::new()));
+    let storage = {
+        #[cfg(not(feature = "storagebackend"))]
+        {
+            Arc::new(Mutex::new(MemStorage::new()))
+        }
 
+        #[cfg(feature = "storagebackend")]
+        {
+            let storage_path = format!("storage_{}.db", port);
+            let config = StorageConfig::new(storage_path.clone(), None);
+            let broker_backend = Storage::new(&config)
+                .map_err(|e| BrokerError::StorageError(e.to_string()))
+                .unwrap();
+            let broker_backend = Arc::new(Mutex::new(broker_backend));
+            Arc::new(Mutex::new(BrokerStorage::new(broker_backend)))
+        }
+    };
     // Create Server
     let server_cert = Cert::new().unwrap();
     let server_pubkey_hash = server_cert.get_pubk_hash().unwrap();

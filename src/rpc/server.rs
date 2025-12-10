@@ -76,7 +76,9 @@ where
             warn!("Routing denied: {} cannot send to {}", from, dest);
             return Ok(false);
         }
-        self.storage.lock_or_err("storage")?.insert(from, dest, msg);
+        self.storage
+            .lock_or_err("storage")?
+            .insert(from, dest, msg)?;
         Ok(true)
     }
 
@@ -85,7 +87,7 @@ where
         _: context::Context,
         dest: Identifier,
     ) -> Result<Option<Message>, BrokerRpcError> {
-        Ok(self.storage.lock_or_err("storage")?.get(dest))
+        Ok(self.storage.lock_or_err("storage")?.get(dest)?)
     }
 
     async fn ack(
@@ -94,7 +96,7 @@ where
         dest: Identifier,
         uid: u64,
     ) -> Result<bool, BrokerRpcError> {
-        Ok(self.storage.lock_or_err("storage")?.remove(dest, uid))
+        Ok(self.storage.lock_or_err("storage")?.remove(dest, uid)?)
     }
 
     async fn ping(self, _: context::Context) -> bool {
