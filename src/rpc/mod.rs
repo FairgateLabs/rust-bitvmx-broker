@@ -26,8 +26,8 @@ pub struct Message {
 #[tarpc::service]
 pub(crate) trait Broker {
     async fn send(from_id: u8, dest: Identifier, msg: String) -> Result<bool, BrokerRpcError>;
-    async fn get(dest: Identifier) -> Result<Option<Message>, BrokerRpcError>;
-    async fn ack(dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError>;
+    async fn get(dest_id: u8) -> Result<Option<Message>, BrokerRpcError>;
+    async fn ack(dest_id: u8, uid: u64) -> Result<bool, BrokerRpcError>;
     async fn ping() -> bool;
 }
 

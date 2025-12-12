@@ -69,9 +69,9 @@ fn main() -> anyhow::Result<()> {
             let _ret = client.send_msg(flags.from.clone().unwrap().id, flags.dest, msg.clone());
         }
         None => {
-            while let Some(msg) = client.get_msg(flags.dest.clone()).unwrap_or(None) {
+            while let Some(msg) = client.get_msg(flags.dest.id.clone()).unwrap_or(None) {
                 println!("{:?}", msg);
-                client.ack(flags.dest.clone(), msg.uid).unwrap();
+                client.ack(flags.dest.id.clone(), msg.uid).unwrap();
             }
         }
     }

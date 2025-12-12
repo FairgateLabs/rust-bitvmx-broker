@@ -278,24 +278,45 @@ fn test_ack() {
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
     );
-    let myclient = SyncClient::new(
+    let myclient1 = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
+        allow_list.clone(),
+    )
+    .unwrap();
+
+    let client_config2 = BrokerConfig::new(
+        port,
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        client2.get_pkh(),
+    );
+    let myclient2 = SyncClient::new(
+        &client_config2,
+        Cert::new_with_privk(&client2.privk).unwrap(),
         allow_list,
     )
     .unwrap();
 
-    myclient
+    myclient1
         .send_msg(client1.id, client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.msg, "Hello!");
-    let msg_dup = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg_dup = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.uid, msg_dup.uid);
-    assert!(myclient.ack(client2.get_identifier(), msg.uid).unwrap());
-    println!("{:?}", myclient.get_msg(client2.get_identifier()).unwrap());
-    assert!(myclient
-        .get_msg(client2.get_identifier())
+    assert!(myclient2.ack(client2.get_identifier().id, msg.uid).unwrap());
+    println!(
+        "{:?}",
+        myclient2.get_msg(client2.get_identifier().id).unwrap()
+    );
+    assert!(myclient2
+        .get_msg(client2.get_identifier().id)
         .unwrap()
         .is_none());
     broker_server.close();
@@ -322,21 +343,36 @@ fn test_reconnect() {
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
     );
-    let myclient = SyncClient::new(
+    let myclient1 = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list.clone(),
     )
     .unwrap();
 
-    myclient
+    let client_config2 = BrokerConfig::new(
+        port,
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        client2.get_pkh(),
+    );
+    let myclient2 = SyncClient::new(
+        &client_config2,
+        Cert::new_with_privk(&client2.privk).unwrap(),
+        allow_list.clone(),
+    )
+    .unwrap();
+
+    myclient1
         .send_msg(client1.id, client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.msg, "Hello!");
-    myclient.ack(client2.get_identifier(), msg.uid).unwrap();
-    assert!(myclient
-        .get_msg(client2.get_identifier())
+    myclient2.ack(client2.get_identifier().id, msg.uid).unwrap();
+    assert!(myclient2
+        .get_msg(client2.get_identifier().id)
         .unwrap()
         .is_none());
     broker_server.close();
@@ -344,12 +380,15 @@ fn test_reconnect() {
     // Reconnect
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    myclient
+    myclient1
         .send_msg(client1.id, client2.get_identifier(), "World!".to_string())
         .unwrap();
-    let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.msg, "World!");
-    myclient.ack(client2.get_identifier(), msg.uid).unwrap();
+    myclient2.ack(client2.get_identifier().id, msg.uid).unwrap();
     broker_server.close();
     cleanup_storage(port, 3);
 }
@@ -782,12 +821,12 @@ fn test_readme_example() {
         .send_msg(0, destination_identifier.clone(), "hello".to_string())
         .unwrap();
     while let Some(msg) = client1
-        .get_msg(destination_identifier.clone())
+        .get_msg(destination_identifier.clone().id)
         .unwrap_or(None)
     {
         println!("{:?}", msg);
         client1
-            .ack(destination_identifier.clone(), msg.uid)
+            .ack(destination_identifier.clone().id, msg.uid)
             .unwrap();
     }
 }

@@ -75,8 +75,8 @@ impl DualChannel {
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, crate::rpc::errors::BrokerError> {
-        if let Some(msg) = self.client.get_msg(self.my_id.clone())? {
-            self.client.ack(self.my_id.clone(), msg.uid)?;
+        if let Some(msg) = self.client.get_msg(self.my_id.id.clone())? {
+            self.client.ack(self.my_id.id.clone(), msg.uid)?;
             Ok(Some((msg.msg, msg.from)))
         } else {
             Ok(None)

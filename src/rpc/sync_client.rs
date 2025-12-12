@@ -39,11 +39,11 @@ impl SyncClient {
             .block_on(self.client.async_send_msg(from_id, dest, msg))
     }
 
-    pub fn get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
+    pub fn get_msg(&self, dest: u8) -> Result<Option<Message>, BrokerError> {
         self.rt.block_on(self.client.async_get_msg(dest))
     }
 
-    pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
+    pub fn ack(&self, dest: u8, uid: u64) -> Result<bool, BrokerError> {
         self.rt.block_on(self.client.async_ack(dest, uid))
     }
 
