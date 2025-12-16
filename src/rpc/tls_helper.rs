@@ -62,6 +62,16 @@ impl Cert {
             ca_der,
         })
     }
+    pub fn new_with_privk_and_ca(privk: &str, ca_key: &str) -> Result<Self, BrokerError> {
+        let cert = Self::create_cert(Some(privk))?;
+        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, ca_key)?;
+        Ok(Self {
+            key_pem,
+            cert_pem,
+            spki_der,
+            ca_der,
+        })
+    }
     pub fn from_key_file(key_path: &str) -> Result<Self, BrokerError> {
         let key_pem = std::fs::read_to_string(key_path)?;
         let cert = Self::create_cert(Some(&key_pem))?;
