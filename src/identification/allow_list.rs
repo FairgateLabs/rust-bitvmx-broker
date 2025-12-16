@@ -119,11 +119,6 @@ impl AllowList {
         info!("Allow list saved to allowlist.yaml");
         Ok(())
     }
-
-    pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, IdentificationError> {
-        let cert = Cert::new_with_privk(privk)?;
-        Ok(cert.get_pubk_hash()?)
-    }
 }
 
 #[cfg(test)]
