@@ -76,25 +76,33 @@ where
             warn!("Routing denied: {} cannot send to {}", from, dest);
             return Ok(false);
         }
-        self.storage.lock_or_err("storage")?.insert(from, dest, msg);
+        self.storage
+            .lock_or_err("storage")?
+            .insert(from, dest, msg)?;
         Ok(true)
     }
 
     async fn get(
         self,
         _: context::Context,
-        dest: Identifier,
+        dest_id: u8,
     ) -> Result<Option<Message>, BrokerRpcError> {
-        Ok(self.storage.lock_or_err("storage")?.get(dest))
+        let auth_dest = Identifier {
+            pubkey_hash: self.client_pubkey_hash.clone(),
+            id: dest_id,
+        };
+        Ok(self.storage.lock_or_err("storage")?.get(auth_dest)?)
     }
 
-    async fn ack(
-        self,
-        _: context::Context,
-        dest: Identifier,
-        uid: u64,
-    ) -> Result<bool, BrokerRpcError> {
-        Ok(self.storage.lock_or_err("storage")?.remove(dest, uid))
+    async fn ack(self, _: context::Context, dest_id: u8, uid: u64) -> Result<bool, BrokerRpcError> {
+        let auth_dest = Identifier {
+            pubkey_hash: self.client_pubkey_hash.clone(),
+            id: dest_id,
+        };
+        Ok(self
+            .storage
+            .lock_or_err("storage")?
+            .remove(auth_dest, uid)?)
     }
 
     async fn ping(self, _: context::Context) -> bool {

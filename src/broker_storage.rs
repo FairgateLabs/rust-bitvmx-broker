@@ -7,6 +7,7 @@
 // To get the info for the message, we split the key and get the from and uid field.
 
 use crate::identification::identifier::Identifier;
+use crate::rpc::errors::BrokerRpcError;
 use crate::rpc::{Message, StorageApi};
 use std::sync::{Arc, Mutex};
 use storage_backend::storage::{KeyValueStore, Storage};
@@ -27,49 +28,70 @@ fn format_uid(uid: u64) -> String {
 }
 
 impl StorageApi for BrokerStorage {
-    fn get(&mut self, dest: Identifier) -> Option<Message> {
+    fn get(&mut self, dest: Identifier) -> Result<Option<Message>, BrokerRpcError> {
         let mut keys = self
             .storage
             .lock()
-            .unwrap()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
             .partial_compare_keys(&format!("broker_msg_{dest}_"))
             .unwrap_or(vec![]);
         if keys.is_empty() {
-            return None;
+            return Ok(None);
         }
         keys.sort();
         let key = keys.first().unwrap();
-        if let Some(msg) = self.storage.lock().unwrap().get(key).unwrap_or(None) {
+        if let Some(msg) = self
+            .storage
+            .lock()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
+            .get(key)
+            .unwrap_or(None)
+        {
             let parts: Vec<&str> = key.split('_').collect();
-            let uid = parts[3].parse::<u64>().unwrap();
-            let from = parts[4].parse::<Identifier>().unwrap();
-            return Some(Message { uid, from, msg });
+            let uid = parts[3]
+                .parse::<u64>()
+                .map_err(|e| BrokerRpcError::ParseError(format!("Failed to parse uid: {e}")))?;
+            let from = parts[4].parse::<Identifier>().map_err(|e| {
+                BrokerRpcError::ParseError(format!("Failed to parse Identifier: {e}"))
+            })?;
+            return Ok(Some(Message { uid, from, msg }));
         }
-        None
+        Ok(None)
     }
 
-    fn remove(&mut self, dest: Identifier, uid: u64) -> bool {
+    fn remove(&mut self, dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError> {
         let keys = self
             .storage
             .lock()
-            .unwrap()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
             .partial_compare_keys(&format!("broker_msg_{dest}_{}", format_uid(uid)))
             .unwrap_or(vec![]);
         if keys.len() != 1 {
-            return false;
+            return Ok(false);
         }
         let key = keys.first().unwrap();
-        if self.storage.lock().unwrap().delete(key).is_err() {
-            return false;
+        if self
+            .storage
+            .lock()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
+            .delete(key)
+            .is_err()
+        {
+            return Ok(false);
         }
-        true
+        Ok(true)
     }
 
-    fn insert(&mut self, from: Identifier, dest: Identifier, msg: String) {
+    fn insert(
+        &mut self,
+        from: Identifier,
+        dest: Identifier,
+        msg: String,
+    ) -> Result<(), BrokerRpcError> {
         let uid: u64 = self
             .storage
             .lock()
-            .unwrap()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
             .get("broker_current_uid")
             .unwrap_or(None)
             .unwrap_or(0)
@@ -77,12 +99,17 @@ impl StorageApi for BrokerStorage {
         let _ = self
             .storage
             .lock()
-            .unwrap()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
             .set("broker_current_uid", uid, None);
-        let _ = self.storage.lock().unwrap().set(
-            &format!("broker_msg_{dest}_{}_{from}", format_uid(uid)),
-            msg,
-            None,
-        );
+        let _ = self
+            .storage
+            .lock()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
+            .set(
+                &format!("broker_msg_{dest}_{}_{from}", format_uid(uid)),
+                msg,
+                None,
+            );
+        Ok(())
     }
 }

@@ -135,12 +135,12 @@ impl Client {
             .await??)
     }
 
-    pub async fn async_get_msg(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
+    pub async fn async_get_msg(&self, dest: u8) -> Result<Option<Message>, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.get(context::current(), dest).await??)
     }
 
-    pub async fn async_ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
+    pub async fn async_ack(&self, dest: u8, uid: u64) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
         Ok(client.ack(context::current(), dest, uid).await??)
     }

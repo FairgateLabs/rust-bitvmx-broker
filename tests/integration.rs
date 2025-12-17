@@ -249,7 +249,7 @@ fn test_channel() {
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -278,24 +278,45 @@ fn test_ack() {
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
     );
-    let myclient = SyncClient::new(
+    let myclient1 = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
+        allow_list.clone(),
+    )
+    .unwrap();
+
+    let client_config2 = BrokerConfig::new(
+        port,
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        client2.get_pkh(),
+    );
+    let myclient2 = SyncClient::new(
+        &client_config2,
+        Cert::new_with_privk(&client2.privk).unwrap(),
         allow_list,
     )
     .unwrap();
 
-    myclient
+    myclient1
         .send_msg(client1.id, client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.msg, "Hello!");
-    let msg_dup = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg_dup = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.uid, msg_dup.uid);
-    assert!(myclient.ack(client2.get_identifier(), msg.uid).unwrap());
-    println!("{:?}", myclient.get_msg(client2.get_identifier()).unwrap());
-    assert!(myclient
-        .get_msg(client2.get_identifier())
+    assert!(myclient2.ack(client2.get_identifier().id, msg.uid).unwrap());
+    println!(
+        "{:?}",
+        myclient2.get_msg(client2.get_identifier().id).unwrap()
+    );
+    assert!(myclient2
+        .get_msg(client2.get_identifier().id)
         .unwrap()
         .is_none());
     broker_server.close();
@@ -322,21 +343,36 @@ fn test_reconnect() {
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
     );
-    let myclient = SyncClient::new(
+    let myclient1 = SyncClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list.clone(),
     )
     .unwrap();
 
-    myclient
+    let client_config2 = BrokerConfig::new(
+        port,
+        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        client2.get_pkh(),
+    );
+    let myclient2 = SyncClient::new(
+        &client_config2,
+        Cert::new_with_privk(&client2.privk).unwrap(),
+        allow_list.clone(),
+    )
+    .unwrap();
+
+    myclient1
         .send_msg(client1.id, client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.msg, "Hello!");
-    myclient.ack(client2.get_identifier(), msg.uid).unwrap();
-    assert!(myclient
-        .get_msg(client2.get_identifier())
+    myclient2.ack(client2.get_identifier().id, msg.uid).unwrap();
+    assert!(myclient2
+        .get_msg(client2.get_identifier().id)
         .unwrap()
         .is_none());
     broker_server.close();
@@ -344,12 +380,15 @@ fn test_reconnect() {
     // Reconnect
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    myclient
+    myclient1
         .send_msg(client1.id, client2.get_identifier(), "World!".to_string())
         .unwrap();
-    let msg = myclient.get_msg(client2.get_identifier()).unwrap().unwrap();
+    let msg = myclient2
+        .get_msg(client2.get_identifier().id)
+        .unwrap()
+        .unwrap();
     assert_eq!(msg.msg, "World!");
-    myclient.ack(client2.get_identifier(), msg.uid).unwrap();
+    myclient2.ack(client2.get_identifier().id, msg.uid).unwrap();
     broker_server.close();
     cleanup_storage(port, 3);
 }
@@ -371,7 +410,7 @@ fn test_stress_channel() {
 
     for i in 0..1000 {
         println!("Sending: {}", i);
-        let send_ok = user1.send(client2.get_identifier(), "Hello!".to_string());
+        let send_ok = user1.send(&client2.get_identifier(), "Hello!".to_string());
         if send_ok.is_err() {
             println!("Error: {:?}", send_ok);
         }
@@ -413,7 +452,7 @@ fn test_dinamic_allow_list() {
     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap_err();
     assert!(matches!(msg, BrokerError::RpcError(RpcError::Channel(_))));
@@ -423,7 +462,7 @@ fn test_dinamic_allow_list() {
         .unwrap()
         .add(client2.get_pkh(), IpAddr::V4(Ipv4Addr::LOCALHOST));
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
 
@@ -463,7 +502,7 @@ fn test_local_service_id() {
         allow_list.clone(),
     );
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -501,7 +540,7 @@ fn test_routing() {
 
     // An error should occur because the routing table does not have a route for client1 to client2
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     assert!(user2.recv().unwrap().is_none());
 
@@ -512,7 +551,7 @@ fn test_routing() {
         WildCard::No,
     );
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -585,7 +624,7 @@ fn test_integration() {
 
     // user1 and user2 should be able to communicate
     user1
-        .send(client2.get_identifier(), "Hello!".to_string())
+        .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -593,7 +632,7 @@ fn test_integration() {
 
     // user3 and user1 should be able to communicate
     user3
-        .send(client1.get_identifier(), "Hello from client3!".to_string())
+        .send(&client1.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
     let msg = user1.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello from client3!");
@@ -601,7 +640,7 @@ fn test_integration() {
 
     // user3 should not be able to send messages to user2
     user3
-        .send(client2.get_identifier(), "Hello from client3!".to_string())
+        .send(&client2.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
     assert!(user2.recv().unwrap().is_none());
 
@@ -625,7 +664,7 @@ fn test_simple_channel() {
     let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
     let (user2, client2) = DualChannel::new_simple(&server_config, 0).unwrap();
 
-    user1.send(client2, "Hello!".to_string()).unwrap();
+    user1.send(&client2, "Hello!".to_string()).unwrap();
     let msg = user2.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1);
@@ -658,10 +697,13 @@ fn test_multiple_servers() {
     );
     let user4 = prepare_client(port + 3, &server2.get_pkh(), &client22.privk, allow_list);
     user1
-        .send(client12.get_identifier(), "Hello!".to_string())
+        .send(&client12.get_identifier(), "Hello!".to_string())
         .unwrap();
     user3
-        .send(client22.get_identifier(), "Hello from server2!".to_string())
+        .send(
+            &client22.get_identifier(),
+            "Hello from server2!".to_string(),
+        )
         .unwrap();
     let msg = user2.recv().unwrap().unwrap();
     let msg2 = user4.recv().unwrap().unwrap();
@@ -689,7 +731,7 @@ fn test_local_channel() {
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
 
     local_channel
-        .send(client1.get_identifier(), "Hello!".to_string())
+        .send(&client1.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = user1.recv().unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
@@ -708,8 +750,23 @@ fn test_local_channel() {
 fn test_readme_example() {
     let port = 10000;
     cleanup_storage(port, 3);
-    let storage = Arc::new(Mutex::new(MemStorage::new()));
+    let storage = {
+        #[cfg(not(feature = "storagebackend"))]
+        {
+            Arc::new(Mutex::new(MemStorage::new()))
+        }
 
+        #[cfg(feature = "storagebackend")]
+        {
+            let storage_path = format!("storage_{}.db", port);
+            let config = StorageConfig::new(storage_path.clone(), None);
+            let broker_backend = Storage::new(&config)
+                .map_err(|e| BrokerError::StorageError(e.to_string()))
+                .unwrap();
+            let broker_backend = Arc::new(Mutex::new(broker_backend));
+            Arc::new(Mutex::new(BrokerStorage::new(broker_backend)))
+        }
+    };
     // Create Server
     let server_cert = Cert::new().unwrap();
     let server_pubkey_hash = server_cert.get_pubk_hash().unwrap();
@@ -764,12 +821,12 @@ fn test_readme_example() {
         .send_msg(0, destination_identifier.clone(), "hello".to_string())
         .unwrap();
     while let Some(msg) = client1
-        .get_msg(destination_identifier.clone())
+        .get_msg(destination_identifier.clone().id)
         .unwrap_or(None)
     {
         println!("{:?}", msg);
         client1
-            .ack(destination_identifier.clone(), msg.uid)
+            .ack(destination_identifier.clone().id, msg.uid)
             .unwrap();
     }
 }

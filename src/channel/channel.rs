@@ -75,8 +75,8 @@ impl DualChannel {
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, crate::rpc::errors::BrokerError> {
-        if let Some(msg) = self.client.get_msg(self.my_id.clone())? {
-            self.client.ack(self.my_id.clone(), msg.uid)?;
+        if let Some(msg) = self.client.get_msg(self.my_id.id.clone())? {
+            self.client.ack(self.my_id.id.clone(), msg.uid)?;
             Ok(Some((msg.msg, msg.from)))
         } else {
             Ok(None)
@@ -110,7 +110,7 @@ where
             self.my_id.clone(),
             dest.clone(),
             msg,
-        );
+        )?;
         Ok(true)
     }
 
@@ -118,14 +118,14 @@ where
         Ok(self
             .storage
             .lock_or_err::<BrokerError>("storage")?
-            .get(dest))
+            .get(dest)?)
     }
 
     pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
         Ok(self
             .storage
             .lock_or_err::<BrokerError>("storage")?
-            .remove(dest, uid))
+            .remove(dest, uid)?)
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, BrokerError> {

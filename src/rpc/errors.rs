@@ -66,6 +66,9 @@ pub enum BrokerError {
 pub enum BrokerRpcError {
     #[error("Mutex error: {0}")]
     MutexError(String),
+
+    #[error("Parse error: {0}")]
+    ParseError(String),
 }
 
 pub trait FromMutexError {
