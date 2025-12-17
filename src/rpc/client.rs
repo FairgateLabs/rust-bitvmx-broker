@@ -3,11 +3,11 @@ use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         errors::MutexExt,
-        tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
+        tls_helper::{AllowListServerVerifier, Cert},
         BrokerClient, BrokerConfig, Message,
     },
 };
-use rustls::pki_types::ServerName;
+use rustls::{pki_types::ServerName, RootCertStore};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
@@ -55,11 +55,19 @@ impl Client {
         // Load certs and private key
         let cert = self.cert.get_cert()?;
         let key = self.cert.get_private_key()?;
+        let ca_cert_der = self.cert.clone().get_ca_cert_der()?;
+
+        // Load CA
+        let mut roots = RootCertStore::empty();
+        roots.add(ca_cert_der)?;
 
         // Client config
         let config = ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(ArcAllowList::new(self.allow_list.clone())))
+            .with_custom_certificate_verifier(Arc::new(
+                AllowListServerVerifier::new(self.allow_list.clone(), roots.into())
+                    .map_err(|e| BrokerError::TlsError(e.to_string()))?,
+            ))
             .with_client_auth_cert(cert, key)
             .map_err(|e| BrokerError::TlsError(e.to_string()))?;
 
@@ -78,13 +86,13 @@ impl Client {
             .ok_or_else(|| BrokerError::TlsError("Empty peer certificate list".into()))?;
 
         // Check against allow list
-        let server_fingerprint = get_fingerprint_hex(server_cert)
+        let server_fingerprint = Cert::get_fingerprint_hex(server_cert)
             .map_err(|e| BrokerError::TlsError(format!("Fingerprint error: {e}")))?;
         let peer_addr = tls_stream.get_ref().0.peer_addr()?;
         let ipaddr = IpAddr::from_str(&peer_addr.ip().to_string())?;
         let allow = self
             .allow_list
-            .lock_or_err::<BrokerError>("allow_llist")?
+            .lock_or_err::<BrokerError>("allow_list")?
             .is_allowed(&server_fingerprint, ipaddr);
 
         if !allow {

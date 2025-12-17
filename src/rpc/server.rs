@@ -3,12 +3,12 @@ use crate::{
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
         errors::{BrokerRpcError, MutexExt},
-        tls_helper::{get_fingerprint_hex, ArcAllowList, Cert},
+        tls_helper::{AllowListClientVerifier, Cert},
         Broker,
     },
 };
 use futures::StreamExt;
-use rustls::ServerConfig;
+use rustls::{RootCertStore, ServerConfig};
 use std::{
     future::Future,
     net::{IpAddr, Ipv4Addr},
@@ -141,11 +141,20 @@ where
     // Load certs, private key, and allowlist
     let certs = cert.get_cert()?;
     let key = cert.get_private_key()?;
+    let ca_cert_der = cert.get_ca_cert_der()?;
+
+    // Load CA
+    let mut roots = RootCertStore::empty();
+    roots.add(ca_cert_der)?;
 
     // Server config
-    let client_auth = Arc::new(ArcAllowList::new(allow_list.clone()));
+    let client_verifier = Arc::new(AllowListClientVerifier::new(
+        allow_list.clone(),
+        roots.into(),
+    )?);
+
     let server_config = ServerConfig::builder()
-        .with_client_cert_verifier(client_auth)
+        .with_client_cert_verifier(client_verifier)
         .with_single_cert(certs, key)?;
     let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
@@ -203,7 +212,7 @@ where
                                             return;
                                         }
                                     };
-                                    hex_fingerprint = match get_fingerprint_hex(&cert) {
+                                    hex_fingerprint = match Cert::get_fingerprint_hex(&cert) {
                                         Ok(fingerprint) => fingerprint,
                                         Err(e) => {
                                             error!("Failed to get fingerprint: {:?}", e);

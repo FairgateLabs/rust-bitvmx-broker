@@ -48,7 +48,7 @@ impl DualChannel {
         let my_cert = Cert::new()?;
         let allow_list = AllowList::new();
         allow_list
-            .lock_or_err::<BrokerError>("allow_llist")?
+            .lock_or_err::<BrokerError>("allow_list")?
             .allow_all();
         let my_identifier = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
