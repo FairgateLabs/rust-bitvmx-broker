@@ -7,7 +7,7 @@ use bitvmx_broker::{
     },
     rpc::{
         errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
-        BrokerConfig,
+        BrokerConfig, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
     },
 };
 use std::{
@@ -797,6 +797,41 @@ fn test_ca() {
         .send_msg(client2.id, server.get_identifier(), "Hello!".to_string())
         .unwrap_err(); // Should fail because of different CAs
 
+    broker_server.close();
+    cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_send_message_too_large_client_side() {
+    let port = 10050;
+    cleanup_storage(port, 3);
+
+    let (server, client1, client2) = get_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+
+    // Oversized message
+    let big_msg = "A".repeat(MAX_MSG_SIZE_KB * 1024 + 1);
+    let limit_msg = "B".repeat(MAX_MSG_SIZE_KB * 1024);
+    let over_frame_limit_msg = "C".repeat(MAX_FRAME_SIZE_KB * 1024 + 1);
+
+    assert!(matches!(
+        user1.send(&client2.get_identifier(), big_msg),
+        Err(BrokerError::MessageTooLarge)
+    ));
+    assert!(user1.send(&client2.get_identifier(), limit_msg).is_ok());
+    assert!(matches!(
+        user1.send(&client2.get_identifier(), over_frame_limit_msg),
+        Err(BrokerError::MessageTooLarge)
+    ));
     broker_server.close();
     cleanup_storage(port, 3);
 }

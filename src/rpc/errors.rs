@@ -58,6 +58,9 @@ pub enum BrokerError {
     #[error("Invalid private key for PEM {0}")]
     InvalidPrivateKey(#[from] rsa::pkcs8::Error),
 
+    #[error("Message too large")]
+    MessageTooLarge,
+
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -69,6 +72,9 @@ pub enum BrokerRpcError {
 
     #[error("Parse error: {0}")]
     ParseError(String),
+
+    #[error("Message too large")]
+    MessageTooLarge,
 }
 
 pub trait FromMutexError {

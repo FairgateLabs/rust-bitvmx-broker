@@ -4,7 +4,7 @@ use crate::{
     rpc::{
         errors::{BrokerRpcError, MutexExt},
         tls_helper::{AllowListClientVerifier, Cert},
-        Broker,
+        Broker, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
     },
 };
 use futures::StreamExt;
@@ -75,6 +75,10 @@ where
         if !allowed {
             warn!("Routing denied: {} cannot send to {}", from, dest);
             return Ok(false);
+        }
+        if msg.len() > MAX_MSG_SIZE_KB * 1024 {
+            warn!("Message too large: {} bytes", msg.len());
+            return Err(BrokerRpcError::MessageTooLarge);
         }
         self.storage
             .lock_or_err("storage")?
@@ -242,7 +246,10 @@ where
 
 
                             // Client is authorized
-                            let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
+                            let codec = LengthDelimitedCodec::builder()
+                                .max_frame_length(MAX_FRAME_SIZE_KB * 1024)
+                                .new_codec();
+                            let framed = Framed::new(tls_stream, codec); // Length prefix, message boundaries
                             let transport = serde_transport::new(framed, Json::default());
                             server::BaseChannel::with_defaults(transport)
                                 .execute(BrokerServer::new(hex_fingerprint, storage, routing).serve())
