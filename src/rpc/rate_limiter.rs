@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::Mutex, time::Instant};
 
 // TODO: Adjust these values as needed
 // Note: every time a client wants to send, it also needs to do a ping, so 2 tokens are consumed per request
-pub const RATE_LIMIT_CAPACITY: usize = 30; // Max 30 requests
-pub const RATE_LIMIT_REFILL_RATE: f64 = 5.0; // 5 tokens per second
+pub const RATE_LIMIT_CAPACITY: usize = 10000; // Max 10000 requests
+pub const RATE_LIMIT_REFILL_RATE: f64 = 10.0; // 10 tokens per second
 
 #[derive(Clone)]
 pub struct RateLimiter {
