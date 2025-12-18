@@ -9,15 +9,16 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub mod client;
 pub mod errors;
+pub mod rate_limiter;
 pub mod server;
 pub mod sync_client;
 pub mod sync_server;
 pub mod tls_helper;
 
-pub const MAX_FRAME_SIZE_KB: usize = 64; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
-                                         // encoded frame, not just the message payload
-                                         // As a result, the maximum allowed `msg` payload
-                                         // must be strictly smaller than this limit.
+pub const MAX_FRAME_SIZE_KB: usize = 1024; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
+                                           // encoded frame, not just the message payload
+                                           // As a result, the maximum allowed `msg` payload
+                                           // must be strictly smaller than this limit.
 pub const MAX_MSG_SIZE_KB: usize = MAX_FRAME_SIZE_KB - 4; // Leave some room for encoding overhead
 const SERVER_ID: u8 = 0; // Default ID for the server
 
@@ -33,7 +34,7 @@ pub(crate) trait Broker {
     async fn send(from_id: u8, dest: Identifier, msg: String) -> Result<bool, BrokerRpcError>;
     async fn get(dest_id: u8) -> Result<Option<Message>, BrokerRpcError>;
     async fn ack(dest_id: u8, uid: u64) -> Result<bool, BrokerRpcError>;
-    async fn ping() -> bool;
+    async fn ping() -> Result<bool, BrokerRpcError>;
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

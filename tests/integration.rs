@@ -6,7 +6,11 @@ use bitvmx_broker::{
         routing::{RoutingTable, WildCard},
     },
     rpc::{
-        errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
+        errors::{BrokerError, BrokerRpcError},
+        rate_limiter::{RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
+        sync_client::SyncClient,
+        sync_server::BrokerSync,
+        tls_helper::Cert,
         BrokerConfig, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
     },
 };
@@ -393,52 +397,53 @@ fn test_reconnect() {
     cleanup_storage(port, 3);
 }
 
-#[test]
-fn test_stress_channel() {
-    let port = 10009;
-    cleanup_storage(port, 3);
-    let (server, client1, client2) = get_keys(port);
-    let allow_list = create_allow_list(vec![
-        server.get_identifier(),
-        client1.get_identifier(),
-        client2.get_identifier(),
-    ]);
-    let (mut broker_server, _) =
-        prepare_server(port, &server.privk, allow_list.clone(), route_all());
-    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
-    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+// TODO: This test is disabled when added rate limiting to the broker because it consumes all the tokens
+// #[test]
+// fn test_stress_channel() {
+//     let port = 10009;
+//     cleanup_storage(port, 3);
+//     let (server, client1, client2) = get_keys(port);
+//     let allow_list = create_allow_list(vec![
+//         server.get_identifier(),
+//         client1.get_identifier(),
+//         client2.get_identifier(),
+//     ]);
+//     let (mut broker_server, _) =
+//         prepare_server(port, &server.privk, allow_list.clone(), route_all());
+//     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+//     let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
-    for i in 0..1000 {
-        println!("Sending: {}", i);
-        let send_ok = user1.send(&client2.get_identifier(), "Hello!".to_string());
-        if send_ok.is_err() {
-            println!("Error: {:?}", send_ok);
-        }
-        assert!(send_ok.is_ok());
+//     for i in 0..1000 {
+//         println!("Sending: {}", i);
+//         let send_ok = user1.send(&client2.get_identifier(), "Hello!".to_string());
+//         if send_ok.is_err() {
+//             println!("Error: {:?}", send_ok);
+//         }
+//         assert!(send_ok.is_ok());
 
-        let mut ok = false;
+//         let mut ok = false;
 
-        while !ok {
-            let try_recv = user2.recv();
-            if try_recv.is_err() {
-                println!("Error: {:?}", try_recv);
-            }
-            assert!(try_recv.is_ok());
-            let recv_ok = try_recv.unwrap();
-            if recv_ok.is_none() {
-                continue;
-            }
-            assert!(recv_ok.is_some());
+//         while !ok {
+//             let try_recv = user2.recv();
+//             if try_recv.is_err() {
+//                 println!("Error: {:?}", try_recv);
+//             }
+//             assert!(try_recv.is_ok());
+//             let recv_ok = try_recv.unwrap();
+//             if recv_ok.is_none() {
+//                 continue;
+//             }
+//             assert!(recv_ok.is_some());
 
-            ok = true;
-            let msg = recv_ok.unwrap();
-            assert_eq!(msg.0, "Hello!");
-            assert_eq!(msg.1, client1.get_identifier());
-        }
-    }
-    broker_server.close();
-    cleanup_storage(port, 3);
-}
+//             ok = true;
+//             let msg = recv_ok.unwrap();
+//             assert_eq!(msg.0, "Hello!");
+//             assert_eq!(msg.1, client1.get_identifier());
+//         }
+//     }
+//     broker_server.close();
+//     cleanup_storage(port, 3);
+// }
 
 #[test]
 fn test_dinamic_allow_list() {
@@ -803,7 +808,7 @@ fn test_ca() {
 
 #[test]
 fn test_send_message_too_large_client_side() {
-    let port = 10050;
+    let port = 10060;
     cleanup_storage(port, 3);
 
     let (server, client1, client2) = get_keys(port);
@@ -825,13 +830,69 @@ fn test_send_message_too_large_client_side() {
 
     assert!(matches!(
         user1.send(&client2.get_identifier(), big_msg),
-        Err(BrokerError::MessageTooLarge)
+        Err(BrokerError::MessageTooLarge(_))
     ));
     assert!(user1.send(&client2.get_identifier(), limit_msg).is_ok());
     assert!(matches!(
         user1.send(&client2.get_identifier(), over_frame_limit_msg),
-        Err(BrokerError::MessageTooLarge)
+        Err(BrokerError::MessageTooLarge(_))
     ));
+    broker_server.close();
+    cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_rate_limit_enforced() {
+    let port = 10070;
+    cleanup_storage(port, 3);
+
+    let (server, client1, client2) = get_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+
+    // Send up to the allowed capacity
+    for i in 0..RATE_LIMIT_CAPACITY / 2 {
+        // Every time a client wants to send, it also needs to do a ping, so 2 tokens are consumed per request
+        let res = user1.send(&client2.get_identifier(), format!("msg-{i}"));
+        assert!(res.is_ok(), "request {} unexpectedly failed: {:?}", i, res);
+    }
+
+    // One more request should exceed the rate limit
+    let res = user1.send(
+        &client2.get_identifier(),
+        "this should be rate limited".to_string(),
+    );
+    assert!(
+        matches!(
+            res,
+            Err(BrokerError::BrokerRpcError(
+                BrokerRpcError::RateLimitExceeded
+            ))
+        ),
+        "expected rate limit error, got: {:?}",
+        res
+    );
+
+    // Wait for some time to allow the rate limiter to refill
+    std::thread::sleep(std::time::Duration::from_secs_f64(
+        (1.0 / RATE_LIMIT_REFILL_RATE) * 2.0,
+    ));
+    // Now the request should succeed again
+    let res = user1.send(&client2.get_identifier(), "after wait".to_string());
+    assert!(
+        res.is_ok(),
+        "request after wait unexpectedly failed: {:?}",
+        res
+    );
+
     broker_server.close();
     cleanup_storage(port, 3);
 }

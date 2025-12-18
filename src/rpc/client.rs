@@ -143,7 +143,7 @@ impl Client {
         let client = self.get_or_connect().await?;
 
         if msg.len() > MAX_MSG_SIZE_KB * 1024 {
-            return Err(BrokerError::MessageTooLarge);
+            return Err(BrokerError::MessageTooLarge(msg.len() / 1024));
         }
 
         Ok(client
@@ -156,7 +156,7 @@ impl Client {
         let msg = client.get(context::current(), dest).await??;
         if let Some(ref m) = msg {
             if m.msg.len() > MAX_MSG_SIZE_KB * 1024 {
-                return Err(BrokerError::MessageTooLarge);
+                return Err(BrokerError::MessageTooLarge(m.msg.len() / 1024));
             }
         }
         Ok(msg)
