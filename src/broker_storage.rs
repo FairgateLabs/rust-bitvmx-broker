@@ -29,10 +29,11 @@ fn format_uid(uid: u64) -> String {
 
 impl StorageApi for BrokerStorage {
     fn get(&mut self, dest: Identifier) -> Result<Option<Message>, BrokerRpcError> {
-        let mut keys = self
+        let storage_lock = self
             .storage
             .lock()
-            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
+        let mut keys = storage_lock
             .partial_compare_keys(&format!("broker_msg_{dest}_"))
             .unwrap_or(vec![]);
         if keys.is_empty() {
@@ -40,13 +41,7 @@ impl StorageApi for BrokerStorage {
         }
         keys.sort();
         let key = keys.first().unwrap();
-        if let Some(msg) = self
-            .storage
-            .lock()
-            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
-            .get(key)
-            .unwrap_or(None)
-        {
+        if let Some(msg) = storage_lock.get(key).unwrap_or(None) {
             let parts: Vec<&str> = key.split('_').collect();
             let uid = parts[3]
                 .parse::<u64>()
@@ -60,23 +55,18 @@ impl StorageApi for BrokerStorage {
     }
 
     fn remove(&mut self, dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError> {
-        let keys = self
+        let storage_lock = self
             .storage
             .lock()
-            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
+        let keys = storage_lock
             .partial_compare_keys(&format!("broker_msg_{dest}_{}", format_uid(uid)))
             .unwrap_or(vec![]);
         if keys.len() != 1 {
             return Ok(false);
         }
         let key = keys.first().unwrap();
-        if self
-            .storage
-            .lock()
-            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
-            .delete(key)
-            .is_err()
-        {
+        if storage_lock.delete(key).is_err() {
             return Ok(false);
         }
         Ok(true)
@@ -88,28 +78,23 @@ impl StorageApi for BrokerStorage {
         dest: Identifier,
         msg: String,
     ) -> Result<(), BrokerRpcError> {
-        let uid: u64 = self
+        let storage_lock = self
             .storage
             .lock()
-            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
+
+        let uid: u64 = storage_lock
             .get("broker_current_uid")
             .unwrap_or(None)
             .unwrap_or(0)
             + 1;
-        let _ = self
-            .storage
-            .lock()
-            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
-            .set("broker_current_uid", uid, None);
-        let _ = self
-            .storage
-            .lock()
-            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?
-            .set(
-                &format!("broker_msg_{dest}_{}_{from}", format_uid(uid)),
-                msg,
-                None,
-            );
+
+        let _ = storage_lock.set("broker_current_uid", uid, None);
+        let _ = storage_lock.set(
+            &format!("broker_msg_{dest}_{}_{from}", format_uid(uid)),
+            msg,
+            None,
+        );
         Ok(())
     }
 }
