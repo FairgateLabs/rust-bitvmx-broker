@@ -3,8 +3,9 @@ use crate::{
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
         errors::{BrokerRpcError, MutexExt},
+        rate_limiter::RateLimiterManager,
         tls_helper::{AllowListClientVerifier, Cert},
-        Broker,
+        Broker, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
     },
 };
 use futures::StreamExt;
@@ -33,6 +34,7 @@ pub struct BrokerServer<S: StorageApi> {
     client_pubkey_hash: String,
     storage: Arc<Mutex<S>>,
     routing: Arc<Mutex<RoutingTable>>,
+    rate_limiter: Arc<RateLimiterManager>,
 }
 
 impl<S> BrokerServer<S>
@@ -43,11 +45,13 @@ where
         client_pubkey_hash: String,
         storage: Arc<Mutex<S>>,
         routing: Arc<Mutex<RoutingTable>>,
+        rate_limiter: Arc<RateLimiterManager>,
     ) -> Self {
         Self {
             client_pubkey_hash,
             storage,
             routing,
+            rate_limiter,
         }
     }
 }
@@ -63,6 +67,16 @@ where
         dest: Identifier,
         msg: String,
     ) -> Result<bool, BrokerRpcError> {
+        if !self
+            .rate_limiter
+            .check_rate_limit(&self.client_pubkey_hash)?
+        {
+            warn!(
+                "Rate limit exceeded trying to send msg for {}",
+                self.client_pubkey_hash
+            );
+            return Err(BrokerRpcError::RateLimitExceeded);
+        }
         let from = Identifier {
             pubkey_hash: self.client_pubkey_hash.clone(),
             id: from_id,
@@ -76,6 +90,10 @@ where
             warn!("Routing denied: {} cannot send to {}", from, dest);
             return Ok(false);
         }
+        if msg.len() > MAX_MSG_SIZE_KB * 1024 {
+            warn!("Message too large: {} bytes", msg.len());
+            return Err(BrokerRpcError::MessageTooLarge(msg.len() / 1024));
+        }
         self.storage
             .lock_or_err("storage")?
             .insert(from, dest, msg)?;
@@ -87,6 +105,16 @@ where
         _: context::Context,
         dest_id: u8,
     ) -> Result<Option<Message>, BrokerRpcError> {
+        if !self
+            .rate_limiter
+            .check_rate_limit(&self.client_pubkey_hash)?
+        {
+            warn!(
+                "Rate limit exceeded trying to get msg for {}",
+                self.client_pubkey_hash
+            );
+            return Err(BrokerRpcError::RateLimitExceeded);
+        }
         let auth_dest = Identifier {
             pubkey_hash: self.client_pubkey_hash.clone(),
             id: dest_id,
@@ -95,6 +123,16 @@ where
     }
 
     async fn ack(self, _: context::Context, dest_id: u8, uid: u64) -> Result<bool, BrokerRpcError> {
+        if !self
+            .rate_limiter
+            .check_rate_limit(&self.client_pubkey_hash)?
+        {
+            warn!(
+                "Rate limit exceeded trying to ack msg for {}",
+                self.client_pubkey_hash
+            );
+            return Err(BrokerRpcError::RateLimitExceeded);
+        }
         let auth_dest = Identifier {
             pubkey_hash: self.client_pubkey_hash.clone(),
             id: dest_id,
@@ -105,8 +143,18 @@ where
             .remove(auth_dest, uid)?)
     }
 
-    async fn ping(self, _: context::Context) -> bool {
-        true
+    async fn ping(self, _: context::Context) -> Result<bool, BrokerRpcError> {
+        if !self
+            .rate_limiter
+            .check_rate_limit(&self.client_pubkey_hash)?
+        {
+            warn!(
+                "Rate limit exceeded trying to ping for {}",
+                self.client_pubkey_hash
+            );
+            return Err(BrokerRpcError::RateLimitExceeded);
+        }
+        Ok(true)
     }
 }
 
@@ -153,6 +201,7 @@ where
         .with_single_cert(certs, key)?;
     let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
+    let rate_limiter = Arc::new(RateLimiterManager::new());
     let cancellation_token = CancellationToken::new();
     let mut connection_tasks: Vec<JoinHandle<()>> = Vec::new();
     info!("Server started, waiting for TLS connections...");
@@ -174,6 +223,7 @@ where
                 let allowlist = allow_list.clone();
                 let routing = routing.clone();
                 let cancel_token = cancellation_token.clone();
+                let rate_limiter = rate_limiter.clone();
 
                 // Spawn a new task for each connection
                 let task = tokio::spawn(async move {
@@ -237,10 +287,13 @@ where
 
 
                             // Client is authorized
-                            let framed = Framed::new(tls_stream, LengthDelimitedCodec::new()); // Length prefix, message boundaries
+                            let codec = LengthDelimitedCodec::builder()
+                                .max_frame_length(MAX_FRAME_SIZE_KB * 1024)
+                                .new_codec();
+                            let framed = Framed::new(tls_stream, codec); // Length prefix, message boundaries
                             let transport = serde_transport::new(framed, Json::default());
                             server::BaseChannel::with_defaults(transport)
-                                .execute(BrokerServer::new(hex_fingerprint, storage, routing).serve())
+                                .execute(BrokerServer::new(hex_fingerprint, storage, routing, rate_limiter).serve())
                                 .for_each(spawn)
                                 .await;
 

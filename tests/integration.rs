@@ -6,8 +6,12 @@ use bitvmx_broker::{
         routing::{RoutingTable, WildCard},
     },
     rpc::{
-        errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
-        BrokerConfig,
+        errors::{BrokerError, BrokerRpcError},
+        rate_limiter::{RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
+        sync_client::SyncClient,
+        sync_server::BrokerSync,
+        tls_helper::Cert,
+        BrokerConfig, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
     },
 };
 use std::{
@@ -796,6 +800,95 @@ fn test_ca() {
     myclient2
         .send_msg(client2.id, server.get_identifier(), "Hello!".to_string())
         .unwrap_err(); // Should fail because of different CAs
+
+    broker_server.close();
+    cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_send_message_too_large_client_side() {
+    let port = 10060;
+    cleanup_storage(port, 3);
+
+    let (server, client1, client2) = get_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+
+    // Oversized message
+    let big_msg = "A".repeat(MAX_MSG_SIZE_KB * 1024 + 1);
+    let limit_msg = "B".repeat(MAX_MSG_SIZE_KB * 1024);
+    let over_frame_limit_msg = "C".repeat(MAX_FRAME_SIZE_KB * 1024 + 1);
+
+    assert!(matches!(
+        user1.send(&client2.get_identifier(), big_msg),
+        Err(BrokerError::MessageTooLarge(_))
+    ));
+    assert!(user1.send(&client2.get_identifier(), limit_msg).is_ok());
+    assert!(matches!(
+        user1.send(&client2.get_identifier(), over_frame_limit_msg),
+        Err(BrokerError::MessageTooLarge(_))
+    ));
+    broker_server.close();
+    cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_rate_limit_enforced() {
+    let port = 10070;
+    cleanup_storage(port, 3);
+
+    let (server, client1, client2) = get_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+
+    let mut saw_rate_limit = false;
+
+    // Every time a client wants to send, it also needs to do a ping, so 2 tokens are consumed per request, so it should never exceed the rate limit capacity
+    for i in 0..(RATE_LIMIT_CAPACITY * 2) {
+        let res = user1.send(&client2.get_identifier(), format!("msg-{i}"));
+        if matches!(
+            res,
+            Err(BrokerError::BrokerRpcError(
+                BrokerRpcError::RateLimitExceeded
+            ))
+        ) {
+            saw_rate_limit = true;
+            break;
+        }
+    }
+
+    assert!(
+        saw_rate_limit,
+        "rate limiter never triggered after many requests"
+    );
+
+    // Wait for some time to allow the rate limiter to refill
+    std::thread::sleep(std::time::Duration::from_secs_f64(
+        (1.0 / RATE_LIMIT_REFILL_RATE) * 2.0,
+    ));
+    // Now the request should succeed again
+    let res = user1.send(&client2.get_identifier(), "after wait".to_string());
+    assert!(
+        res.is_ok(),
+        "request after wait unexpectedly failed: {:?}",
+        res
+    );
 
     broker_server.close();
     cleanup_storage(port, 3);
