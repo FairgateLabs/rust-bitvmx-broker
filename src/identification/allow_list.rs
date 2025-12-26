@@ -1,6 +1,6 @@
 use crate::{
     identification::{errors::IdentificationError, identifier::PubkHash},
-    rpc::tls_helper::Cert,
+    rpc::{errors::BrokerError, tls_helper::Cert},
 };
 use std::{
     collections::HashMap,
@@ -44,7 +44,7 @@ impl AllowList {
     pub fn from_certs(
         certs: Vec<Cert>,
         addrs: Vec<IpAddr>,
-    ) -> Result<Arc<Mutex<Self>>, IdentificationError> {
+    ) -> Result<Arc<Mutex<Self>>, BrokerError> {
         let mut allow_list = HashMap::new();
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             let pubkey_hash = cert.get_pubk_hash()?;
@@ -92,12 +92,12 @@ impl AllowList {
         self.allow_list.remove(pubk_hash);
     }
 
-    pub fn remove_by_cert(&mut self, cert: &Cert) -> Result<(), IdentificationError> {
+    pub fn remove_by_cert(&mut self, cert: &Cert) -> Result<(), BrokerError> {
         let pubkey_hash = cert.get_pubk_hash()?;
         self.allow_list.remove(&pubkey_hash);
         Ok(())
     }
-    pub fn add_by_cert(&mut self, cert: &Cert, addr: IpAddr) -> Result<(), IdentificationError> {
+    pub fn add_by_cert(&mut self, cert: &Cert, addr: IpAddr) -> Result<(), BrokerError> {
         let pubkey_hash = cert.get_pubk_hash()?;
         self.allow_list.insert(pubkey_hash, Some(addr));
         Ok(())
@@ -106,7 +106,7 @@ impl AllowList {
         &mut self,
         certs: Vec<Cert>,
         addrs: Vec<IpAddr>,
-    ) -> Result<(), IdentificationError> {
+    ) -> Result<(), BrokerError> {
         for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
             self.add_by_cert(&cert, addr)?;
         }

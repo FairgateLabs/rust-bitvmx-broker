@@ -11,9 +11,6 @@ pub enum IdentificationError {
     #[error("Failed to parse JSON: {0}")]
     JsonParseError(#[from] serde_json::Error),
 
-    #[error("Broker error: {0}")]
-    BrokerError(#[from] crate::rpc::errors::BrokerError),
-
     #[error("Invalid routing line: {0}")]
     InvalidRoutingLine(String),
 
