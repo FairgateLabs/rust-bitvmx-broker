@@ -1,6 +1,6 @@
 use crate::identification::{
     errors::IdentificationError,
-    identifier::{Identifier, MAX_PUBKEY_HASH_LEN},
+    identifier::{Identifier, PubkHash, MAX_PUBKEY_HASH_LEN},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -19,7 +19,7 @@ pub enum WildCard {
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub struct RouteIdentifier {
-    pub pubkey_hash: String,
+    pub pubkey_hash: PubkHash,
     pub id: Option<u8>,
 }
 

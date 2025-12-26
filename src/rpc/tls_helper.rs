@@ -1,4 +1,4 @@
-use crate::identification::allow_list::AllowList;
+use crate::identification::{allow_list::AllowList, identifier::PubkHash};
 use crate::rpc::errors::BrokerError;
 use pem::Pem;
 use rcgen::{Certificate, CertificateParams, KeyPair, SanType};
@@ -37,50 +37,65 @@ pub struct Cert {
     cert_pem: String,
     spki_der: Vec<u8>,
     ca_der: Vec<u8>,
+    pubk_hash: PubkHash,
 }
 
 impl Cert {
+    fn pubk_hash_from_der(spki_der: &Vec<u8>) -> Result<PubkHash, BrokerError> {
+        let fingerprint = Sha256::digest(&spki_der);
+        let hexsum = hex::encode(fingerprint);
+        Ok(hexsum)
+    }
+
     pub fn new() -> Result<Self, BrokerError> {
         let cert = Self::create_cert(None)?;
         let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, CA_KEY)?;
+        let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         info!("Created new certificate");
         Ok(Self {
             key_pem,
             cert_pem,
             spki_der,
             ca_der,
+            pubk_hash,
         })
     }
     /// privk is a hex string in PEM format.
     pub fn new_with_privk(privk: &str) -> Result<Self, BrokerError> {
         let cert = Self::create_cert(Some(privk))?;
         let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, CA_KEY)?;
+        let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         Ok(Self {
             key_pem,
             cert_pem,
             spki_der,
             ca_der,
+            pubk_hash,
         })
     }
     pub fn new_with_privk_and_ca(privk: &str, ca_key: &str) -> Result<Self, BrokerError> {
         let cert = Self::create_cert(Some(privk))?;
         let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, ca_key)?;
+        let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         Ok(Self {
             key_pem,
             cert_pem,
             spki_der,
             ca_der,
+            pubk_hash,
         })
     }
     pub fn from_key_file(key_path: &str) -> Result<Self, BrokerError> {
         let key_pem = std::fs::read_to_string(key_path)?;
         let cert = Self::create_cert(Some(&key_pem))?;
         let (generated_key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, CA_KEY)?;
+        let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         Ok(Self {
             key_pem: generated_key_pem,
             cert_pem,
             spki_der,
             ca_der,
+            pubk_hash,
         })
     }
     pub fn from_file(path: &str, name: &str) -> Result<Self, BrokerError> {
@@ -104,11 +119,13 @@ impl Cert {
 
         let ca = Self::load_ca(CA_KEY)?;
         let ca_der = ca.serialize_der()?;
+        let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         Ok(Self {
             key_pem,
             cert_pem,
             spki_der,
             ca_der,
+            pubk_hash,
         })
     }
 
@@ -196,11 +213,8 @@ impl Cert {
     ) -> Result<rustls::pki_types::CertificateDer<'static>, BrokerError> {
         Ok(self.ca_der.into())
     }
-    pub fn get_pubk_hash(&self) -> Result<String, BrokerError> {
-        let _pubk_hexstring = hex::encode(&self.spki_der);
-        let fingerprint = Sha256::digest(&self.spki_der);
-        let hexsum = hex::encode(fingerprint);
-        Ok(hexsum)
+    pub fn get_pubk_hash(&self) -> Result<PubkHash, BrokerError> {
+        Ok(self.pubk_hash.clone())
     }
 
     // SPKI format:

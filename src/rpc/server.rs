@@ -11,7 +11,7 @@ use futures::StreamExt;
 use rustls::{RootCertStore, ServerConfig};
 use std::{
     future::Future,
-    net::{IpAddr, Ipv4Addr},
+    net::IpAddr,
     str::FromStr,
     sync::{Arc, Mutex},
 };
@@ -126,12 +126,7 @@ pub async fn run<S>(
 where
     S: 'static + Send + Sync + StorageApi + Clone,
 {
-    let server_addr = (
-        config
-            .ip
-            .unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
-        config.port,
-    );
+    let server_addr = (config.listen_ip, config.port);
     let listener = TcpListener::bind(server_addr).await?;
     info!(
         "Listening with TLS on port {}",

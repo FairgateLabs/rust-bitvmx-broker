@@ -34,7 +34,8 @@ pub(crate) trait Broker {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BrokerConfig {
     port: u16,
-    ip: Option<IpAddr>,
+    ip: IpAddr,
+    listen_ip: IpAddr,
     pubk_hash: String,
 }
 
@@ -44,7 +45,8 @@ impl BrokerConfig {
                     //TODO: remove
         Self {
             port,
-            ip,
+            ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
             pubk_hash,
         }
     }
@@ -64,7 +66,8 @@ impl BrokerConfig {
         Ok((
             Self {
                 port,
-                ip,
+                ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
                 pubk_hash,
             },
             identifier,
@@ -85,14 +88,11 @@ impl BrokerConfig {
     }
 
     pub fn get_address(&self) -> SocketAddr {
-        SocketAddr::new(
-            self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            self.port,
-        )
+        SocketAddr::new(self.ip, self.port)
     }
 
     pub fn get_ip(&self) -> IpAddr {
-        self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        self.ip
     }
 }
 

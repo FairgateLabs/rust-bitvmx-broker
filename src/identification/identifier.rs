@@ -17,8 +17,8 @@ impl Identifier {
     }
 }
 
-impl From<(String, u8)> for Identifier {
-    fn from(tuple: (String, u8)) -> Self {
+impl From<(PubkHash, u8)> for Identifier {
+    fn from(tuple: (PubkHash, u8)) -> Self {
         Identifier {
             pubkey_hash: tuple.0,
             id: tuple.1,

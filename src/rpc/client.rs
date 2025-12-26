@@ -9,7 +9,7 @@ use crate::{
 };
 use rustls::{pki_types::ServerName, RootCertStore};
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     str::FromStr,
     sync::{Arc, Mutex as ArcMutex},
 };
@@ -35,10 +35,7 @@ impl Clone for Client {
 
 impl Client {
     pub fn new(config: &BrokerConfig, cert: Cert, allow_list: Arc<ArcMutex<AllowList>>) -> Self {
-        let address = SocketAddr::new(
-            config.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            config.port,
-        );
+        let address = SocketAddr::new(config.ip, config.port);
         info!("Client address: {}", address);
         Self {
             address,
