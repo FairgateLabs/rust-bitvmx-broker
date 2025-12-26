@@ -1,4 +1,4 @@
-use crate::rpc::MAX_MSG_SIZE_KB;
+use crate::{identification, rpc::MAX_MSG_SIZE_KB};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 use thiserror::Error;
@@ -10,6 +10,12 @@ pub enum BrokerError {
 
     #[error("IO error")]
     IoError(#[from] std::io::Error),
+
+    #[error("Serialization error {0}")]
+    SerdeSerializationError(#[from] serde_json::Error),
+
+    #[error("Identification error: {0}")]
+    IdentificationError(#[from] identification::errors::IdentificationError),
 
     #[error("Broker client is disconnected")]
     Disconnected,
@@ -23,8 +29,9 @@ pub enum BrokerError {
     #[error("Generic TLS error: {0}")]
     TlsError(String),
 
+    #[cfg(feature = "storagebackend")]
     #[error("Storage error: {0}")]
-    StorageError(String),
+    StorageError(#[from] storage_backend::error::StorageError),
 
     #[error("Failed to get address: {0}")]
     AddressError(#[from] std::net::AddrParseError),
