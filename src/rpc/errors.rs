@@ -1,3 +1,4 @@
+use crate::rpc::MAX_MSG_SIZE_KB;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard};
 use thiserror::Error;
@@ -61,6 +62,9 @@ pub enum BrokerError {
     #[error("Invalid private key for PEM {0}")]
     InvalidPrivateKey(#[from] rsa::pkcs8::Error),
 
+    #[error("Message too large. Max size is {MAX_MSG_SIZE_KB} KB, but got {0} KB")]
+    MessageTooLarge(usize),
+
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -72,6 +76,12 @@ pub enum BrokerRpcError {
 
     #[error("Parse error: {0}")]
     ParseError(String),
+
+    #[error("Message too large. Max size is {MAX_MSG_SIZE_KB} KB, but got {0} KB")]
+    MessageTooLarge(usize),
+
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded,
 }
 
 pub trait FromMutexError {

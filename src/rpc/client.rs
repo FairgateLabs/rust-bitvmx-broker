@@ -4,7 +4,7 @@ use crate::{
     rpc::{
         errors::MutexExt,
         tls_helper::{AllowListServerVerifier, Cert},
-        BrokerClient, BrokerConfig, Message,
+        BrokerClient, BrokerConfig, Message, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
     },
 };
 use rustls::{pki_types::ServerName, RootCertStore};
@@ -98,7 +98,10 @@ impl Client {
         }
 
         // Server is authorized
-        let framed = Framed::new(tls_stream, LengthDelimitedCodec::new());
+        let codec = LengthDelimitedCodec::builder()
+            .max_frame_length(MAX_FRAME_SIZE_KB * 1024)
+            .new_codec();
+        let framed = Framed::new(tls_stream, codec);
         let transport = serde_transport::new(framed, Json::default());
         let client = BrokerClient::new(client::Config::default(), transport).spawn();
         let mut locked = self.client.lock().await;
@@ -135,6 +138,11 @@ impl Client {
         msg: String,
     ) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
+
+        if msg.len() > MAX_MSG_SIZE_KB * 1024 {
+            return Err(BrokerError::MessageTooLarge(msg.len() / 1024));
+        }
+
         Ok(client
             .send(context::current(), from_id, dest, msg)
             .await??)
@@ -142,7 +150,13 @@ impl Client {
 
     pub async fn async_get_msg(&self, dest: u8) -> Result<Option<Message>, BrokerError> {
         let client = self.get_or_connect().await?;
-        Ok(client.get(context::current(), dest).await??)
+        let msg = client.get(context::current(), dest).await??;
+        if let Some(ref m) = msg {
+            if m.msg.len() > MAX_MSG_SIZE_KB * 1024 {
+                return Err(BrokerError::MessageTooLarge(m.msg.len() / 1024));
+            }
+        }
+        Ok(msg)
     }
 
     pub async fn async_ack(&self, dest: u8, uid: u64) -> Result<bool, BrokerError> {
