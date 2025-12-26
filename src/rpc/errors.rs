@@ -10,6 +10,9 @@ pub enum BrokerError {
     #[error("IO error")]
     IoError(#[from] std::io::Error),
 
+    #[error("Serialization error {0}")]
+    SerdeSerializationError(#[from] serde_json::Error),
+
     #[error("Broker client is disconnected")]
     Disconnected,
 
