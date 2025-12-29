@@ -9,7 +9,7 @@ use storage_backend::{
     storage_config::StorageConfig,
 };
 use tokio::runtime::Runtime;
-use tracing::{error, info};
+use tracing::{info, warn};
 
 const COMMS_ID: u8 = 0;
 
@@ -43,6 +43,20 @@ pub struct QueueChannel {
     allow_list: Arc<Mutex<AllowList>>,
     routing_table: Arc<Mutex<RoutingTable>>,
     rt: Arc<Mutex<Runtime>>,
+}
+
+enum QueueType {
+    OutQueue,
+    InQueue,
+}
+
+impl ToString for QueueType {
+    fn to_string(&self) -> String {
+        match self {
+            QueueType::OutQueue => "outqueue".to_string(),
+            QueueType::InQueue => "inqueue".to_string(),
+        }
+    }
 }
 
 impl QueueChannel {
@@ -104,32 +118,51 @@ impl QueueChannel {
         })
     }
 
-    fn storage_key(&self, id: u64, pubk_hash: &PubkHash, address: &SocketAddr) -> String {
+    fn storage_out_key(&self, id: u64, pubk_hash: &PubkHash, address: &SocketAddr) -> String {
         format!(
-            "broker/queue/{}/msgs/{}/{}/{}",
-            self.name, id, pubk_hash, address
+            "broker/{}/{}/msgs/{}/{}/{}",
+            QueueType::OutQueue.to_string(),
+            self.name,
+            id,
+            pubk_hash,
+            address
         )
     }
 
-    fn storage_idx_key(&self) -> String {
-        format!("broker/queue/{}/uid", self.name)
+    fn storage_in_key(&self, id: u64, identifier: &Identifier) -> String {
+        format!(
+            "broker/{}/{}/msgs/{}/{}/{}",
+            QueueType::InQueue.to_string(),
+            self.name,
+            id,
+            identifier.pubkey_hash,
+            identifier.id
+        )
     }
 
-    fn get_next_idx(&self) -> Result<u64, BrokerError> {
-        let key = self.storage_idx_key();
+    fn storage_idx_key(&self, queue: &QueueType) -> String {
+        format!("broker/{}/{}/uid", queue.to_string(), self.name)
+    }
+
+    fn partial_compare_keys(&self, queue: &QueueType) -> String {
+        format!("broker/{}/{}/msgs/", queue.to_string(), self.name)
+    }
+
+    fn get_next_idx(&self, queue: &QueueType) -> Result<u64, BrokerError> {
+        let key = self.storage_idx_key(queue);
         let current_idx: u64 = self.storage.get(&key).unwrap_or(None).unwrap_or(0) + 1;
         self.storage.set(&key, current_idx, None)?;
         Ok(current_idx)
     }
 
-    fn enqueue_msg(
+    fn enqueue_out_msg(
         &self,
         pubk_hash: &PubkHash,
         address: &SocketAddr,
         data: Vec<u8>,
     ) -> Result<(), BrokerError> {
-        let idx = self.get_next_idx()?;
-        let key = self.storage_key(idx, pubk_hash, address);
+        let idx = self.get_next_idx(&QueueType::OutQueue)?;
+        let key = self.storage_out_key(idx, pubk_hash, address);
         let data = serde_json::to_string(&data)?;
 
         self.storage.set(&key, data, None)?;
@@ -143,15 +176,14 @@ impl QueueChannel {
         address: SocketAddr,
         data: Vec<u8>,
     ) -> Result<(), BrokerError> {
-        self.enqueue_msg(pubk_hash, &address, data)?;
-
+        self.enqueue_out_msg(pubk_hash, &address, data)?;
         Ok(())
     }
 
-    pub fn tick(&self) -> Result<(), BrokerError> {
+    fn process_out_queue(&self) -> Result<(), BrokerError> {
         let mut storage_keys = self
             .storage
-            .partial_compare_keys(&format!("broker/queue/{}/msgs/", self.name))?
+            .partial_compare_keys(&self.partial_compare_keys(&QueueType::OutQueue))?
             .into_iter()
             .collect::<Vec<String>>();
 
@@ -179,6 +211,11 @@ impl QueueChannel {
                     .is_ok_and(|x| x)
                 {
                     self.storage.delete(&key)?;
+                } else {
+                    warn!(
+                        "Failed to send queued message to {} at {}",
+                        pubk_hash, address_str
+                    );
                 }
             }
         }
@@ -210,40 +247,65 @@ impl QueueChannel {
         sync_client.send_msg(COMMS_ID, identifier, msg)
     }
 
-    //TODO: Simplify check/internal_check/get
-    pub fn check_receive(&mut self) -> Option<ReceiveHandlerChannel> {
-        match self.internal_check_receive() {
-            Ok(Some(receive)) => Some(receive),
-            Ok(None) => None,
-            Err(err) => {
-                error!("{}", err);
-                None
-            }
+    fn process_in_queue(&self) -> Result<(), BrokerError> {
+        let tx = self.storage.begin_transaction();
+
+        let mut msg_uids = vec![];
+        for msg in self.local_channel.get_all()? {
+            msg_uids.push(msg.uid);
+            let key = self.storage_in_key(msg.uid, &msg.from);
+            self.storage.set(&key, msg.msg, Some(tx))?;
         }
+        self.storage.commit_transaction(tx)?;
+
+        info!(
+            "Moved {} messages from localchannel to inqueu",
+            msg_uids.len()
+        );
+        for uid in msg_uids {
+            self.local_channel.ack(uid)?;
+        }
+
+        Ok(())
     }
 
-    fn internal_check_receive(&mut self) -> Result<Option<ReceiveHandlerChannel>, BrokerError> {
-        match self.get()? {
-            Some((id, data)) => {
-                let data = serde_json::from_str::<Vec<u8>>(&data.to_string())?;
-                info!("Receive data from id: {}: {:?}", id, data);
-                Ok(Some(ReceiveHandlerChannel::Msg(id, data)))
-            }
-            None => Ok(None),
-        }
+    pub fn tick(&self) -> Result<(), BrokerError> {
+        self.process_out_queue()?;
+        self.process_in_queue()?;
+        Ok(())
     }
 
-    fn get(&self) -> Result<Option<(Identifier, String)>, BrokerError> {
-        //TODO: move all into inbound queue, and if successful ack then remove from there
-        if let Some((data, identifier)) = self.local_channel.recv()? {
-            info!(
-                "Received data {:?} from broker with id {}",
-                data, identifier
-            );
-            Ok(Some((identifier, data)))
-        } else {
-            Ok(None)
+    pub fn check_receive(&mut self) -> Result<Vec<ReceiveHandlerChannel>, BrokerError> {
+        let mut storage_keys = self
+            .storage
+            .partial_compare_keys(&self.partial_compare_keys(&QueueType::InQueue))?
+            .into_iter()
+            .collect::<Vec<String>>();
+
+        storage_keys.sort();
+
+        let mut messages = vec![];
+
+        for key in storage_keys {
+            if let Some(data) = self.storage.get(&key)? {
+                let x: String = data;
+                let parts: Vec<&str> = key.split('/').collect();
+                if parts.len() < 7 {
+                    continue;
+                }
+                let pubk_hash = parts[5];
+                let id = parts[6];
+
+                let msg = Identifier::new(pubk_hash.to_string(), id.parse::<u8>()?);
+                let data = serde_json::from_str::<Vec<u8>>(&x)?;
+
+                messages.push(ReceiveHandlerChannel::Msg(msg, data));
+
+                self.storage.delete(&key)?;
+            }
         }
+
+        Ok(messages)
     }
 
     pub fn get_pubk_hash(&self) -> Result<PubkHash, BrokerError> {

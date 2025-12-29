@@ -17,6 +17,9 @@ pub enum BrokerError {
     #[error("Identification error: {0}")]
     IdentificationError(#[from] identification::errors::IdentificationError),
 
+    #[error("Error parsing int")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
     #[error("Broker client is disconnected")]
     Disconnected,
 
