@@ -8,6 +8,7 @@ use storage_backend::{
     storage::{KeyValueStore, Storage},
     storage_config::StorageConfig,
 };
+use tokio::runtime::Runtime;
 use tracing::{error, info};
 
 const COMMS_ID: u8 = 0;
@@ -41,6 +42,7 @@ pub struct QueueChannel {
     storage: Rc<Storage>,
     allow_list: Arc<Mutex<AllowList>>,
     routing_table: Arc<Mutex<RoutingTable>>,
+    rt: Arc<Mutex<Runtime>>,
 }
 
 impl QueueChannel {
@@ -87,6 +89,8 @@ impl QueueChannel {
             broker_storage.clone(),
         );
 
+        let rt = Arc::new(Mutex::new(Runtime::new()?));
+
         Ok(Self {
             name: name.to_string(),
             server,
@@ -96,6 +100,7 @@ impl QueueChannel {
             storage,
             allow_list,
             routing_table,
+            rt,
         })
     }
 
@@ -194,8 +199,12 @@ impl QueueChannel {
             dest_pubk_hash.to_string(),
         );
 
-        let sync_client =
-            SyncClient::new(&server_config, self.cert.clone(), self.allow_list.clone())?;
+        let sync_client = SyncClient::new_with_runtime(
+            &server_config,
+            self.cert.clone(),
+            self.allow_list.clone(),
+            self.rt.clone(),
+        )?;
 
         let identifier = Identifier::new(dest_pubk_hash.to_string(), COMMS_ID);
         sync_client.send_msg(COMMS_ID, identifier, msg)
