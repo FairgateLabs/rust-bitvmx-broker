@@ -29,14 +29,22 @@ impl BrokerSync {
 
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
+        let (server_started_tx, mut server_started_rx) = mpsc::channel(1);
+
         rt.spawn(run(
             shutdown_rx,
+            server_started_tx,
             storage.clone(),
             config.clone(),
             cert.clone(),
             allow_list.clone(),
             routing.clone(),
         ));
+
+        // Wait for server to start
+        rt.block_on(async {
+            server_started_rx.recv().await;
+        });
 
         Ok(Self { rt, shutdown_tx })
     }
@@ -50,10 +58,6 @@ impl BrokerSync {
     where
         S: 'static + Send + Sync + StorageApi + Clone,
     {
-        let rt = Runtime::new()?;
-
-        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
-
         let allow_list = AllowList::new();
         allow_list
             .lock_or_err::<BrokerError>("allow_list")?
@@ -62,16 +66,7 @@ impl BrokerSync {
         let routing = RoutingTable::new();
         routing.lock_or_err::<BrokerError>("routing")?.allow_all();
 
-        rt.spawn(run(
-            shutdown_rx,
-            storage.clone(),
-            config.clone(),
-            cert.clone(),
-            allow_list.clone(),
-            routing.clone(),
-        ));
-
-        Ok(Self { rt, shutdown_tx })
+        Self::new(config, storage, cert, allow_list, routing)
     }
 
     pub fn close(&mut self) {

@@ -163,8 +163,10 @@ async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
 }
 
 type ShutDownSignal = mpsc::Receiver<()>;
+type ServerStarted = mpsc::Sender<()>;
 pub async fn run<S>(
     mut shutdown: ShutDownSignal,
+    server_started: ServerStarted,
     storage: Arc<Mutex<S>>,
     config: BrokerConfig,
     cert: Cert,
@@ -205,6 +207,8 @@ where
     let cancellation_token = CancellationToken::new();
     let mut connection_tasks: Vec<JoinHandle<()>> = Vec::new();
     info!("Server started, waiting for TLS connections...");
+
+    server_started.send(()).await.ok();
 
     tokio::select! {
         _ = async {
