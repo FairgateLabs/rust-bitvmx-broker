@@ -114,23 +114,30 @@ where
         Ok(true)
     }
 
-    pub fn get(&self, dest: Identifier) -> Result<Option<Message>, BrokerError> {
+    pub fn get(&self) -> Result<Option<Message>, BrokerError> {
         Ok(self
             .storage
             .lock_or_err::<BrokerError>("storage")?
-            .get(dest)?)
+            .get(self.my_id.clone())?)
     }
 
-    pub fn ack(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerError> {
+    pub fn get_all(&self) -> Result<Vec<Message>, BrokerError> {
         Ok(self
             .storage
             .lock_or_err::<BrokerError>("storage")?
-            .remove(dest, uid)?)
+            .get_all(self.my_id.clone())?)
+    }
+
+    pub fn ack(&self, uid: u64) -> Result<bool, BrokerError> {
+        Ok(self
+            .storage
+            .lock_or_err::<BrokerError>("storage")?
+            .remove(self.my_id.clone(), uid)?)
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, BrokerError> {
-        if let Some(msg) = self.get(self.my_id.clone())? {
-            self.ack(self.my_id.clone(), msg.uid)?;
+        if let Some(msg) = self.get()? {
+            self.ack(msg.uid)?;
             Ok(Some((msg.msg, msg.from)))
         } else {
             Ok(None)

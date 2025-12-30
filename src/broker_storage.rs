@@ -54,6 +54,31 @@ impl StorageApi for BrokerStorage {
         Ok(None)
     }
 
+    fn get_all(&mut self, dest: Identifier) -> Result<Vec<Message>, BrokerRpcError> {
+        let storage_lock = self
+            .storage
+            .lock()
+            .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
+        let mut messages = Vec::new();
+        let mut keys = storage_lock
+            .partial_compare_keys(&format!("broker_msg_{dest}_"))
+            .unwrap_or(vec![]);
+        keys.sort();
+        for key in keys {
+            if let Some(msg) = storage_lock.get(&key).unwrap_or(None) {
+                let parts: Vec<&str> = key.split('_').collect();
+                let uid = parts[3]
+                    .parse::<u64>()
+                    .map_err(|e| BrokerRpcError::ParseError(format!("Failed to parse uid: {e}")))?;
+                let from = parts[4].parse::<Identifier>().map_err(|e| {
+                    BrokerRpcError::ParseError(format!("Failed to parse Identifier: {e}"))
+                })?;
+                messages.push(Message { uid, from, msg });
+            }
+        }
+        Ok(messages)
+    }
+
     fn remove(&mut self, dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError> {
         let storage_lock = self
             .storage

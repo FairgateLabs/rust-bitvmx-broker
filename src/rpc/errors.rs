@@ -1,6 +1,6 @@
 use crate::{identification, rpc::MAX_MSG_SIZE_KB};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -16,6 +16,9 @@ pub enum BrokerError {
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] identification::errors::IdentificationError),
+
+    #[error("Error parsing int")]
+    ParseIntError(#[from] std::num::ParseIntError),
 
     #[error("Broker client is disconnected")]
     Disconnected,
@@ -71,6 +74,12 @@ pub enum BrokerError {
 
     #[error("Other error: {0}")]
     Other(String),
+}
+
+impl<T> From<PoisonError<T>> for BrokerError {
+    fn from(err: PoisonError<T>) -> Self {
+        BrokerError::MutexError(err.to_string())
+    }
 }
 
 #[derive(Error, Debug, Serialize, Deserialize)]

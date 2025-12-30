@@ -24,6 +24,15 @@ impl StorageApi for MemStorage {
         Ok(self.data.get_mut(&dest).and_then(|q| q.front().cloned()))
     }
 
+    fn get_all(&mut self, dest: Identifier) -> Result<Vec<Message>, BrokerRpcError> {
+        let messages = if let Some(queue) = self.data.get_mut(&dest) {
+            queue.iter().cloned().collect()
+        } else {
+            Vec::new()
+        };
+        Ok(messages)
+    }
+
     fn remove(&mut self, dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError> {
         let data = self.data.get_mut(&dest);
         if let Some(data) = data {

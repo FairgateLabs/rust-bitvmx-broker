@@ -104,6 +104,7 @@ impl BrokerConfig {
 
 pub trait StorageApi {
     fn get(&mut self, dest: Identifier) -> Result<Option<Message>, BrokerRpcError>;
+    fn get_all(&mut self, dest: Identifier) -> Result<Vec<Message>, BrokerRpcError>;
     fn insert(
         &mut self,
         from: Identifier,

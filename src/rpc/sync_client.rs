@@ -3,28 +3,31 @@ use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{client::Client, tls_helper::Cert, BrokerConfig, Message},
 };
-use std::sync::{Arc, Mutex as ArcMutex};
+use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SyncClient {
     client: Client,
-    rt: Runtime,
-}
-
-impl Clone for SyncClient {
-    fn clone(&self) -> Self {
-        self.try_clone().expect("failed to clone SyncClient")
-    }
+    rt: Arc<Mutex<Runtime>>,
 }
 
 impl SyncClient {
     pub fn new(
         config: &BrokerConfig,
         cert: Cert,
-        allow_list: Arc<ArcMutex<AllowList>>,
+        allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self, BrokerError> {
-        let rt = Runtime::new()?;
+        let rt = Arc::new(Mutex::new(Runtime::new()?));
+        Self::new_with_runtime(config, cert, allow_list, rt)
+    }
+
+    pub fn new_with_runtime(
+        config: &BrokerConfig,
+        cert: Cert,
+        allow_list: Arc<Mutex<AllowList>>,
+        rt: Arc<Mutex<Runtime>>,
+    ) -> Result<Self, BrokerError> {
         let client = Client::new(config, cert, allow_list);
         Ok(Self { rt, client })
     }
@@ -36,22 +39,15 @@ impl SyncClient {
         msg: String,
     ) -> Result<bool, BrokerError> {
         self.rt
+            .lock()?
             .block_on(self.client.async_send_msg(from_id, dest, msg))
     }
 
     pub fn get_msg(&self, dest: u8) -> Result<Option<Message>, BrokerError> {
-        self.rt.block_on(self.client.async_get_msg(dest))
+        self.rt.lock()?.block_on(self.client.async_get_msg(dest))
     }
 
     pub fn ack(&self, dest: u8, uid: u64) -> Result<bool, BrokerError> {
-        self.rt.block_on(self.client.async_ack(dest, uid))
-    }
-
-    fn try_clone(&self) -> Result<Self, BrokerError> {
-        let rt = Runtime::new()?;
-        Ok(Self {
-            rt,
-            client: self.client.clone(),
-        })
+        self.rt.lock()?.block_on(self.client.async_ack(dest, uid))
     }
 }
