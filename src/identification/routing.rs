@@ -38,7 +38,7 @@ impl RoutingTable {
     }
 
     /// Load routing table from YAML file
-    pub fn load_from_file(path: &str) -> Result<Arc<Mutex<Self>>, IdentificationError> {
+    pub fn from_file(path: &str) -> Result<Arc<Mutex<Self>>, IdentificationError> {
         let content = fs::read_to_string(path)?;
 
         if content.trim() == "allow_all" {
@@ -409,7 +409,7 @@ mod tests {
 
         rt.save_to_file(file_path.to_str().unwrap()).unwrap();
 
-        let loaded = RoutingTable::load_from_file(file_path.to_str().unwrap()).unwrap();
+        let loaded = RoutingTable::from_file(file_path.to_str().unwrap()).unwrap();
         let loaded = loaded.lock().unwrap();
         assert!(loaded.can_route(&a, &b));
     }
@@ -424,7 +424,7 @@ mod tests {
         rt.allow_all();
         rt.save_to_file(file_path.to_str().unwrap()).unwrap();
 
-        let loaded = RoutingTable::load_from_file(file_path.to_str().unwrap()).unwrap();
+        let loaded = RoutingTable::from_file(file_path.to_str().unwrap()).unwrap();
         let loaded = loaded.lock().unwrap();
         assert!(loaded.allow_all);
     }

@@ -71,7 +71,7 @@ fn prepare_server(
     allow_list: Arc<Mutex<AllowList>>,
     routing: Arc<Mutex<RoutingTable>>,
 ) -> (BrokerSync, LocalChannel<BrokerStorage>) {
-    let storage_path = format!("storage_{}.db", port);
+    let storage_path = format!("/tmp/storage_{}.db", port);
     let config = StorageConfig::new(storage_path.clone(), None);
     let broker_backend = Storage::new(&config).unwrap();
     let broker_backend = Arc::new(Mutex::new(broker_backend));
@@ -378,6 +378,7 @@ fn test_reconnect() {
         .unwrap()
         .is_none());
     broker_server.close();
+    drop(broker_server);
 
     // Reconnect
     let (mut broker_server, _) =
@@ -564,7 +565,7 @@ fn test_routing() {
         .unwrap()
         .save_to_file("routing.yaml")
         .unwrap();
-    let new_route = RoutingTable::load_from_file("routing.yaml").unwrap();
+    let new_route = RoutingTable::from_file("routing.yaml").unwrap();
     std::fs::remove_file("routing.yaml").unwrap();
     assert_eq!(*new_route.lock().unwrap(), *routing.lock().unwrap());
 
