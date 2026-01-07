@@ -187,7 +187,13 @@ impl QueueChannel {
             .into_iter()
             .collect::<Vec<String>>();
 
-        storage_keys.sort();
+        //storage_keys.sort();
+        storage_keys.sort_by_key(|key| {
+            key.split('/')
+                .nth(4) // index position
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(u64::MAX)
+        });
 
         //TODO: send up to X messages per tick
         //TOOD: split in pubk_hash batcher to avoid one destination flooding the rest
@@ -282,7 +288,13 @@ impl QueueChannel {
             .into_iter()
             .collect::<Vec<String>>();
 
-        storage_keys.sort();
+        //storage_keys.sort();
+        storage_keys.sort_by_key(|key| {
+            key.split('/')
+                .nth(4) // index position
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(u64::MAX)
+        });
 
         let mut messages = vec![];
 
