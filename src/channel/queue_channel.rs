@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     rc::Rc,
     sync::{Arc, Mutex},
@@ -12,6 +13,7 @@ use tokio::runtime::Runtime;
 use tracing::{info, warn};
 
 const COMMS_ID: u8 = 0;
+const MAX_MSGS_PER_TICK_UTILIZATION: f64 = 0.5; // 50% of capacity
 
 use crate::{
     broker_storage::BrokerStorage,
@@ -22,7 +24,11 @@ use crate::{
         routing::RoutingTable,
     },
     rpc::{
-        errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
+        errors::BrokerError,
+        rate_limiter::{RATE_LIMIT_CAPACITY, TOKENS_PER_MESSAGE},
+        sync_client::SyncClient,
+        sync_server::BrokerSync,
+        tls_helper::Cert,
         BrokerConfig,
     },
 };
@@ -213,7 +219,10 @@ impl QueueChannel {
                 .unwrap_or(u64::MAX)
         });
 
-        //TODO: send up to X messages per tick
+        // send up to 50% of max capacity messages per tick
+        let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
+        let max_per_dest = self.max_msgs_per_tick(MAX_MSGS_PER_TICK_UTILIZATION); // use 50% of capacity
+
         //TOOD: split in pubk_hash batcher to avoid one destination flooding the rest
         //TODO: limit rate of sending and retries
         for key in storage_keys {
@@ -224,22 +233,32 @@ impl QueueChannel {
                 }
                 let pubk_hash = parts[5];
                 let address_str = parts[6];
+
+                let address: SocketAddr = address_str.parse()?;
+
+                // check if destination has not exceeded max messages per tick by destination pubk_hash
+                let sent = sent_per_dest.entry(pubk_hash.to_owned()).or_insert(0);
+                if *sent >= max_per_dest {
+                    continue; // destination exhausted for this tick
+                }
+
                 info!(
                     "Attempting to send queued message to {} at {}",
                     pubk_hash, address_str
                 );
-                let address: SocketAddr = address_str.parse()?;
 
                 if self
                     .internal_send(&address, pubk_hash, data)
                     .is_ok_and(|x| x)
                 {
                     self.storage.delete(&key)?;
+                    *sent += 1;
                 } else {
                     warn!(
                         "Failed to send queued message to {} at {}",
                         pubk_hash, address_str
                     );
+                    *sent = max_per_dest; // stop trying to send to this destination this tick
                 }
             }
         }
@@ -355,6 +374,13 @@ impl QueueChannel {
 
     pub fn get_allow_list(&self) -> Arc<Mutex<AllowList>> {
         Arc::clone(&self.allow_list)
+    }
+
+    fn max_msgs_per_tick(&self, utilization: f64) -> usize {
+        assert!((0.0..=1.0).contains(&utilization));
+
+        let max_msgs = RATE_LIMIT_CAPACITY / TOKENS_PER_MESSAGE;
+        ((max_msgs as f64) * utilization).floor() as usize
     }
 }
 
@@ -539,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_sending() {
-        let port = 12060;
+        let port = 12003;
         cleanup_storage(port, 3);
 
         let (mut queue_channel1, mut queue_channel2, _queue_channel3) = get_queue_channels(port);
@@ -632,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_message_ordering() {
-        let port = 12100;
+        let port = 12009;
         cleanup_storage(port, 3);
 
         let (mut sender, mut receiver, _) = get_queue_channels(port);
@@ -675,6 +701,89 @@ mod tests {
         cleanup_storage(port, 3);
         sender.close();
         receiver.close();
+    }
+
+    #[test]
+    fn test_max_msgs_per_tick_per_destination() {
+        let port = 12012;
+        cleanup_storage(port, 3);
+
+        let (mut sender, mut receiver1, mut receiver2) = get_queue_channels(port);
+        let max_per_dest = sender.max_msgs_per_tick(MAX_MSGS_PER_TICK_UTILIZATION);
+
+        // Send more than allowed per tick
+        let excess_msgs = 3;
+        let total_msgs = max_per_dest + excess_msgs;
+
+        // Enqueue messages for both receivers
+        let mut sent_msgs_r1 = Vec::new();
+        let mut sent_msgs_r2 = Vec::new();
+        for i in 0..total_msgs {
+            let msg1 = format!("r1-msg-{i}").into_bytes();
+            let msg2 = format!("r2-msg-{i}").into_bytes();
+
+            sender
+                .send(
+                    &receiver1.get_pubk_hash().unwrap(),
+                    receiver1.get_address(),
+                    msg1.clone(),
+                )
+                .unwrap();
+
+            sender
+                .send(
+                    &receiver2.get_pubk_hash().unwrap(),
+                    receiver2.get_address(),
+                    msg2.clone(),
+                )
+                .unwrap();
+
+            sent_msgs_r1.push(msg1);
+            sent_msgs_r2.push(msg2);
+        }
+
+        // First tick: should only send up to max_per_dest
+        sender.tick().unwrap();
+        receiver1.tick().unwrap();
+        receiver2.tick().unwrap();
+        let recv1_first = receiver1.check_receive().unwrap();
+        let recv2_first = receiver2.check_receive().unwrap();
+        assert_eq!(recv1_first.len(), max_per_dest);
+        assert_eq!(recv2_first.len(), max_per_dest);
+
+        // Second tick: remaining messages should be delivered
+        sender.tick().unwrap();
+        receiver1.tick().unwrap();
+        receiver2.tick().unwrap();
+        let recv1_second = receiver1.check_receive().unwrap();
+        let recv2_second = receiver2.check_receive().unwrap();
+        assert_eq!(recv1_second.len(), excess_msgs);
+        assert_eq!(recv2_second.len(), excess_msgs);
+
+        // Validate contents
+        let recv1_all: Vec<Vec<u8>> = recv1_first
+            .into_iter()
+            .chain(recv1_second.into_iter())
+            .map(|msg| match msg {
+                ReceiveHandlerChannel::Msg(_, data) => data,
+                _ => panic!("Unexpected error"),
+            })
+            .collect();
+        let recv2_all: Vec<Vec<u8>> = recv2_first
+            .into_iter()
+            .chain(recv2_second.into_iter())
+            .map(|msg| match msg {
+                ReceiveHandlerChannel::Msg(_, data) => data,
+                _ => panic!("Unexpected error"),
+            })
+            .collect();
+        assert_eq!(recv1_all, sent_msgs_r1);
+        assert_eq!(recv2_all, sent_msgs_r2);
+
+        cleanup_storage(port, 3);
+        sender.close();
+        receiver1.close();
+        receiver2.close();
     }
 
     pub fn init_tracing() -> anyhow::Result<()> {
