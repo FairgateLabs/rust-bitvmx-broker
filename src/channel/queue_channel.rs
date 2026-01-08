@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use serde::{Deserialize, Serialize};
 use storage_backend::{
     storage::{KeyValueStore, Storage},
     storage_config::StorageConfig,
@@ -14,6 +15,7 @@ use tracing::{info, warn};
 
 const COMMS_ID: u8 = 0;
 const MAX_MSGS_PER_TICK_UTILIZATION: f64 = 0.5; // 50% of capacity
+const MAX_SEND_ATTEMPTS: u8 = 5; // Max attempts to send a message before moving to dead letter queue
 
 use crate::{
     broker_storage::BrokerStorage,
@@ -39,6 +41,13 @@ pub enum ReceiveHandlerChannel {
     Error(BrokerError),
 }
 
+#[derive(Serialize, Deserialize)]
+struct OutgoingMsg {
+    payload: Vec<u8>,
+    ctx: String, // Program context
+    attempts: u8,
+}
+
 pub struct QueueChannel {
     name: String,
     server: BrokerSync,
@@ -54,6 +63,7 @@ pub struct QueueChannel {
 enum QueueType {
     OutQueue,
     InQueue,
+    DeadLetterQueue, // For messages that could not be delivered
 }
 
 impl ToString for QueueType {
@@ -61,6 +71,7 @@ impl ToString for QueueType {
         match self {
             QueueType::OutQueue => "outqueue".to_string(),
             QueueType::InQueue => "inqueue".to_string(),
+            QueueType::DeadLetterQueue => "deadletterqueue".to_string(),
         }
     }
 }
@@ -166,6 +177,22 @@ impl QueueChannel {
         )
     }
 
+    fn storage_deadletter_key(
+        &self,
+        id: u64,
+        pubk_hash: &PubkHash,
+        address: &SocketAddr,
+    ) -> String {
+        format!(
+            "broker/{}/{}/msgs/{}/{}/{}",
+            QueueType::DeadLetterQueue.to_string(),
+            self.name,
+            id,
+            pubk_hash,
+            address
+        )
+    }
+
     fn storage_idx_key(&self, queue: &QueueType) -> String {
         format!("broker/{}/{}/uid", queue.to_string(), self.name)
     }
@@ -183,13 +210,32 @@ impl QueueChannel {
 
     fn enqueue_out_msg(
         &self,
+        ctx: &str,
         pubk_hash: &PubkHash,
         address: &SocketAddr,
         data: Vec<u8>,
     ) -> Result<(), BrokerError> {
         let idx = self.get_next_idx(&QueueType::OutQueue)?;
         let key = self.storage_out_key(idx, pubk_hash, address);
-        let data = serde_json::to_string(&data)?;
+        let msg = OutgoingMsg {
+            payload: data,
+            ctx: ctx.to_string(),
+            attempts: 0, // initial attempt
+        };
+
+        self.storage.set(&key, serde_json::to_string(&msg)?, None)?;
+
+        Ok(())
+    }
+
+    fn enqueue_deadletter_msg(
+        &self,
+        pubk_hash: &PubkHash,
+        address: &SocketAddr,
+        data: &str,
+    ) -> Result<(), BrokerError> {
+        let idx = self.get_next_idx(&QueueType::DeadLetterQueue)?;
+        let key = self.storage_deadletter_key(idx, pubk_hash, address);
 
         self.storage.set(&key, data, None)?;
 
@@ -198,11 +244,12 @@ impl QueueChannel {
 
     pub fn send(
         &self,
+        ctx: &str,
         pubk_hash: &PubkHash,
         address: SocketAddr,
         data: Vec<u8>,
     ) -> Result<(), BrokerError> {
-        self.enqueue_out_msg(pubk_hash, &address, data)?;
+        self.enqueue_out_msg(ctx, pubk_hash, &address, data)?;
         Ok(())
     }
 
@@ -223,10 +270,9 @@ impl QueueChannel {
         let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
         let max_per_dest = self.max_msgs_per_tick(MAX_MSGS_PER_TICK_UTILIZATION); // use 50% of capacity
 
-        //TOOD: split in pubk_hash batcher to avoid one destination flooding the rest
-        //TODO: limit rate of sending and retries
         for key in storage_keys {
-            if let Some(data) = self.storage.get(&key)? {
+            if let Some(raw) = self.storage.get::<_, String>(&key)? {
+                let mut msg: OutgoingMsg = serde_json::from_str(&raw)?;
                 let parts: Vec<&str> = key.split('/').collect();
                 if parts.len() < 7 {
                     continue;
@@ -248,7 +294,7 @@ impl QueueChannel {
                 );
 
                 if self
-                    .internal_send(&address, pubk_hash, data)
+                    .internal_send(&address, pubk_hash, serde_json::to_string(&msg.payload)?)
                     .is_ok_and(|x| x)
                 {
                     self.storage.delete(&key)?;
@@ -258,6 +304,20 @@ impl QueueChannel {
                         "Failed to send queued message to {} at {}",
                         pubk_hash, address_str
                     );
+                    msg.attempts += 1;
+
+                    // If max attempts reached, move to dead letter queue
+                    if msg.attempts >= MAX_SEND_ATTEMPTS {
+                        warn!(
+                            "Dropping message to {} after {} attempts",
+                            pubk_hash, msg.attempts
+                        );
+                        self.enqueue_deadletter_msg(&pubk_hash.to_string(), &address, &raw)?;
+                        self.storage.delete(&key)?;
+                    } else {
+                        self.storage.set(&key, serde_json::to_string(&msg)?, None)?;
+                    }
+
                     *sent = max_per_dest; // stop trying to send to this destination this tick
                 }
             }
@@ -318,10 +378,13 @@ impl QueueChannel {
         Ok(())
     }
 
-    pub fn check_receive(&mut self) -> Result<Vec<ReceiveHandlerChannel>, BrokerError> {
+    fn check_reception(
+        &mut self,
+        queue_type: &QueueType,
+    ) -> Result<Vec<(ReceiveHandlerChannel, Option<String>)>, BrokerError> {
         let mut storage_keys = self
             .storage
-            .partial_compare_keys(&self.partial_compare_keys(&QueueType::InQueue))?
+            .partial_compare_keys(&self.partial_compare_keys(queue_type))?
             .into_iter()
             .collect::<Vec<String>>();
         storage_keys.sort_by_key(|key| {
@@ -341,18 +404,66 @@ impl QueueChannel {
                     continue;
                 }
                 let pubk_hash = parts[5];
-                let id = parts[6];
 
-                let msg = Identifier::new(pubk_hash.to_string(), id.parse::<u8>()?);
-                let data = serde_json::from_str::<Vec<u8>>(&x)?;
+                let (identifier, data, ctx) = match queue_type {
+                    QueueType::InQueue => {
+                        let id = parts[6].parse::<u8>()?;
+                        let identifier = Identifier::new(pubk_hash.to_string(), id);
+                        let data = serde_json::from_str::<Vec<u8>>(&x)?;
+                        (identifier, data, None)
+                    }
+                    QueueType::DeadLetterQueue => {
+                        // No receiver id in deadletter, use COMMS_ID as default
+                        let identifier = Identifier::new(pubk_hash.to_string(), COMMS_ID);
+                        let msg = serde_json::from_str::<OutgoingMsg>(&x)?;
+                        let data = msg.payload;
+                        (identifier, data, Some(msg.ctx))
+                    }
+                    _ => continue,
+                };
 
-                messages.push(ReceiveHandlerChannel::Msg(msg, data));
+                messages.push((ReceiveHandlerChannel::Msg(identifier, data), ctx));
 
                 self.storage.delete(&key)?;
             }
         }
 
         Ok(messages)
+    }
+
+    pub fn check_receive(&mut self) -> Result<Vec<ReceiveHandlerChannel>, BrokerError> {
+        self.check_reception(&QueueType::InQueue)?
+            .into_iter()
+            .map(|(channel, err)| {
+                if let Some(err) = err {
+                    Err(BrokerError::InvalidMessageContext {
+                        expected: "None".to_owned(),
+                        got: err,
+                    })
+                } else {
+                    Ok(channel)
+                }
+            })
+            .collect()
+    }
+
+    // Returns messages in dead letter queue with their corresponding context
+    pub fn check_deadletter(
+        &mut self,
+    ) -> Result<Vec<(ReceiveHandlerChannel, String)>, BrokerError> {
+        self.check_reception(&QueueType::DeadLetterQueue)?
+            .into_iter()
+            .map(|(channel, err)| {
+                if let Some(err) = err {
+                    Ok((channel, err))
+                } else {
+                    Err(BrokerError::InvalidMessageContext {
+                        expected: "Some context".to_owned(),
+                        got: "None".to_owned(),
+                    })
+                }
+            })
+            .collect()
     }
 
     pub fn get_pubk_hash(&self) -> Result<PubkHash, BrokerError> {
@@ -397,6 +508,8 @@ mod tests {
     const PRIVK1: &str = "b'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDhzkbFynswfys/\nVNbM4hzYNKCdAuxYI/jysOPkRHGhlJe+71EE9F2CpAZnjevBsUWxi3+LatfMZjwi\nUz/l3iC6ow8Dsar0BO6RmWQR8Uf/1sx+WNjBk2woISPb60oXbXYj8AVUqYUUSo/Q\nRF5kuGT7dsMvUAx8Irn93w4A5VXx+FLn3r38Tymv7qOMT5cO1xrNStsluBD1RdPj\nz+B6b+7woAKqkrNFR+ZH0HUUKldA+A+pGElQLODyLB7OwxHgKtEsFdyiiDuKW2mP\nsk2dsab9HCNdo9cViA9UbeykDXq7h0/7gYg9XBH8LqqXYpSk/LE6T8k1RVa9EBxV\nRpYqlvFPAgMBAAECggEAV64pfRQq0aIPwP/IiLYkTS/iThWcgH03ZcWaOED7fqqc\nYd+7rhjVVq0qb3uEWCnlzhNE63YJZa0tHIcHANNIEjDO27hZkXd4y8CsQutV8doO\nfeEyCbic/tgffH3Yv1AZ18qTx1QsAL0TKuPhY2rWi26KTAzhTDKP1iyO23ox7Uqs\nwWChuHWyw7SmECRmjKOjTLs1Axea3fos6ERgEv/KZiTi+a9he5JuHOXO6aKTvHI7\nlTAMdloy1CnK6G3Ql7LfBeX20hIwDSZNgp5naB6NjJiDTbxxlGj7apW6hquzJpRP\n1Tn2YLvVKl5bdAOHh44wHBhZR9COjxUT+uASYRb5wQKBgQD7FTe3VPrsi6ejo7db\n9SwTUjsTQKoxrfoNc0xPzGGwKyyArGM++NQI1CZuQQDXVoYl+JC1JOcTLjjW/TYu\nwVGAr63bjtYjU0e8NZzum3nIZ7rpyHJpnbCLBc678KNCvblD4u/Vl1bx/9vRiCTx\n9S0r/LJ54Jr3Ohx9feYERc4K/QKBgQDmOlWNHwFlC2pkYI/0biXWybQZWvz+C5x3\nJO6tf0ykRk2sBEcp07JMhJsE+r4B+lHNSWalkX409Fn6x2ch/6tLP0X+viM5nr+2\nRpGHLpUBeq4+RKMmUS/NgY2DoRV1DRnfk4Vt0BZy5Voc4OVQz0zohwFzYhY60ThR\nV3UJ9HbdOwKBgQCcBS8+CNxzqMRe9xi1V8AvsWVsLT6U6Fr9iKve2k3JvspEmtqB\nAvYfFlVbJaF0Lhvl9HNXXLsKPCqtzWKh4xbWNFSAnl2KTfHBjj8aNhqS4YJQS3Jt\nFsPhX5Z7SqjojCRXfukxfH1Wm3ro1QTAJW4Qa1IsUdl5zu5tPJJ2DTpfsQKBgCii\nXR0mPsnFxQZoYKAEnNsXCJl9DLAN/pSsyQ+IK0/HNMhKjQDd41dMBExRsR2KP8va\ny6onTr4r7oGrlhFTHbmPNlxq1K7DzRRvyhmw6A21yHEnDiCiLay40/BKiw34vPtP\n/znNg1jOECSOsQqdO/bCdUgXJNNGwAjjRb33Ds+nAoGAW76wLk1lwD2tZ8KgMRUU\ni0BkY7eDXPskxCP6BjFq10J/1dC/dsLO9mZfwl2BJ2D+gGmcIzdSb5p1LkuniGuv\nV+/lSa8bdUKwtd5l+CZ0OMqmHryQZICqGeG5uREYv5eqs4mDiuM8QkZdOZUKWzPc\nwWJXrp5cQtvgjS/HyjHB69o=\n-----END PRIVATE KEY-----\n'";
     const PRIVK2: &str = "b'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCeJYILLK2EpGP9\nCrlEeHL1hYODftAUxJTacRezNNuyAqqP04H0IFffXhdz/f54HnYnaN1VrMGNQlR5\nBashFjZa7fVEFp3osVgNEPNu63MA1Gr7o4BakopRbMx7jUyhmlJXNP3VX5tZEha+\nV7GOZEeh2Ej3pehnE/E6SD16Ez9aaGydFgrMALHjT2NfucK0XCcDvMbq53PsBaLm\nnH5TLnvtZvYmdyDoUe+RvlwaRAHv4AWDOElhQrj970giHWY6i9QgqrlTIYN5cQrD\nM6kNj1SaBtCNpG/wIK3NMLW7PAYeEKTopwdsFuVL+1e0IAsTIVpDC1mb3r2GlPji\n0GaMLBAHAgMBAAECggEAFPHDvMYgfuIkqeULL1HCa9jQV5Bqb22vhxSWPnIgLH2k\n6CJrYhEMgjUcZwy68F6caFC/i3KzOYmQ1WxWQy4Fadp88pUKOcCO+EAH9WcyVmhL\neOMpAxXIQstlc3F9tiNRh2IpweIFGXFHWNMVXVXTlNAnrcCnvEsMVhsuJSY6bDcV\n5ejQKE8kM8F30FzD2mii36XamsreMpQBAIlm0i1HH/8PpynUQ12bb2M0T/FR9C5V\nAbfeLUOgrzWgBs9hxmlBzILusJFjv7OvwIkF97GgoAyLKqFmxzncwQUTqh9iH2Js\nemN6Qg+vPIg2Et8Ku9XEX+CSXvDwFckB2Z14jqQw8QKBgQDPHDzAFDSTl+aPH+vd\n01wxtaFyP7KP2OaRabW1qzTPww87agbN3wPJqBBf9lEjVeGNjLrp2NyHX6Wfnt5V\nlpeWts13/M43rju2JJwOrfZnwJsJgQ9ZEQw30e1LWeiGpr0kcWlv2059tEiKgBwY\nNlw6evsCyFjrIuSqgg3riO9xMQKBgQDDel5TfTJ3BJZlgFYnU1YxUZDQ1mcMDnSK\ntdRLdpVWTEkjzf0a6rGJYla0NoqQdH9qDfimVMY6+RQLZVdhhXDVnQuwV0CK9ERY\nQWy/PEoPvIagTXgKJ8fKLYcG420fJJtPmTSEoPZg1PXtuABNj/68bI7ONL5CY6gO\n8iFJU0sGtwKBgA6mlLWRuFZofGrLe0fp16+8hXsrflomocjPjYcYYVgBGGa/jVOq\n3v244c+oAP1a6eW1etNn/9GjtnegKWIskPScYdSHEZ9mt9qepFt1euTD/zOg6ZEH\nX7HjK8IUzhoYWXDmhOrgvKCvzCHgBhzAW63XXUJJIeEgSsS1Bn8O5MFBAoGAMuiv\noDa+6dg8AvtFdMBzdiyz9m+gLrelCmsIew7LHcqIUdbX0CbHTexagFykAbMVa91v\noIH7jmhIHB+sfi1ukXNxE9/lY0rycbm4RKXC9A45UY5bcOmjUrhArj6UsMOr3zMb\nRl9VSyqrUdnV2l1iDliHaJS76DZkEmBk4t/abkkCgYEAxkk3skKgRJPt2bFLzdHV\n3Au24P/Cyqf1LIfXpuJcMBfAhw55g6DOLR4O0BH+s7cZk8hrGVeI9WyhC5EgzZrF\nBjTlZFqFtsz5psj1oNqgr/JnO2fL3csxbDR81q9uSSzdlN7BlzBpdQahi53K9MHi\nZDNGUy5a/PopNnWSzfHYUas=\n-----END PRIVATE KEY-----\n'";
     const PRIVK3: &str = "b'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDK3zkTXQMEWbzL\nSRRBO7Wd657dQ/EifekFOIsDtiWHpjOdMRN9H25dVCkm5aBY2zNn62DzZcOlB57z\nUosALiPiyLrcDEu6w6efl3ZikkYD4gbfSKEAGDn1rLS/eUlM61hrgv7ibeqc8grA\nOo9ksWk9JKalCs0gRkufJn9fmiKmKDYDYkzMfSWZ0hDSL6kcy1ZfQLjDpwT6TJXm\nwVN7X6y25Men1v///qlXlBuIf/o1KtXG2v31NWHP0rxHiu5nCG1vGGenGF8y1puK\nVf+OhyqzPhter9gi5wqLo6QQjzyJt/71WDydVmjMDz30QDJrokV8JFu2zPJiG99u\nrIs9BqyfAgMBAAECggEAVn2ho0A5y46In3B6Gq+eqAOuuK3BLc/ZWxj2p2/uAy2X\n/rHQGb2fO1noq4UlfgyCF5FxxYNCzGZ53Un5KewB76tdgvgZBzhoC/GyjqbHA9vG\ny0X3IgeyGiv16VYHqqwBh+CS0y1CY4QLklXFEYxTjjZEd8OpnVNq5SCwGC2qDQT/\nSXOmY9YhZmE1gi5wsNhe3a03jLsn6ccekZ82jDI8z8zY0H8hfgf5yCDW23HgiHIB\ncGoFv1h+LWl2Qs+cTV9C98XEM/Xf/xBZC6fiydeNOY65OGnDDs1EtpB7KUxI/WKe\niHVAa9iZ1Rt+pJS9ebvfdU0Zim2iJmjA1RpdSwQvPQKBgQD9iMTXvdt6L/arNMhX\nnY+kjHZ/LWF0zWppXc0NHhL8YynyqDqe9ba6M1f+HAtZ/bFNGzmRNBJ/2D8s8js7\nMlfvzZ2Q0+Uhpr3YY4cOfT+WlCRWCoRMcn/EwrhpvV3OJA5jUSxIiroyWNPD3Bdl\nQeRL7LJAjkryfxNX/uCPGegTzQKBgQDM2FGakoqWZ3lMAwFOYRMnarbc5ZQ2Fly4\ns99elNDqMivcrY211Ni6ZcygvEs/vTB701l/w00K/NpF7UBaImj1FGjw1t+gG2IZ\n5VlHkk8+BahIn6nLK2/Ndkzla3I+LvLduU+n0FIQnx3r6tIX3R5yo453BigaSHq/\nvZLyH7TuGwKBgGIBmsYjOFJ1dA8eqktkNwDO44eqDUBPn9D3V6q4c3JpCvAoo/CK\n34X/DwbF5IV3EjDSU2CUFoqhF1rSkJ8DiQbEHyK7JpnpkP2zC6RIOmqE/b7c9eNv\nZ4CyHQOTFk33ljBCUrIAHpYTzFisHccgv5Wx+/4Eg2hWQy4C8t+ejh4JAoGBAJiL\n+3FV8fkBw7XUgxOAfUgcU2N7YH1K9+/gm9aOkmnlxP5JDMA9asyc5N9KeetUk5eT\nFBJuOaCWHmJ2xTaaa3kfouq/ybcszUiloHAJSBPTGLhElqijh1YF5EvxURl30wtF\nZkl9fK++HwVCUQTOeU879+sxXYn9MdQ6dAT1kcLDAoGAH0Pt2LzCX+loETpz2P3i\n4pWnQmc07kfF/KS80IFYRSs4hPO46kEHwstaQDH/6zM/LEow+nln+ribDW+tTQXq\nE/Z5XaLXjZzecdJid8gGGZXUAlbt6HAoftr3xRJTbL94uwNQlHILYwnrfFAPirp1\nrlxUtNVH/gHzfECrVUmwuCM=\n-----END PRIVATE KEY-----\n'";
+
+    const CTX: &str = "test_context";
 
     fn get_allow_routing() -> (Arc<Mutex<AllowList>>, Arc<Mutex<RoutingTable>>) {
         let allow_list = AllowList::new();
@@ -541,6 +654,7 @@ mod tests {
 
         queue_channel1
             .send(
+                CTX,
                 &queue_channel2.get_pubk_hash().unwrap(),
                 queue_channel2.get_address(),
                 msg.clone(),
@@ -575,6 +689,7 @@ mod tests {
 
         queue_channel1
             .send(
+                CTX,
                 &queue_channel2.get_pubk_hash().unwrap(),
                 queue_channel2.get_address(),
                 msg1.clone(),
@@ -582,6 +697,7 @@ mod tests {
             .unwrap();
         queue_channel2
             .send(
+                CTX,
                 &queue_channel1.get_pubk_hash().unwrap(),
                 queue_channel1.get_address(),
                 msg2.clone(),
@@ -624,6 +740,7 @@ mod tests {
 
         queue_channel1
             .send(
+                CTX,
                 &queue_channel2.get_pubk_hash().unwrap(),
                 queue_channel2.get_address(),
                 msg.clone(),
@@ -674,6 +791,7 @@ mod tests {
 
             sender
                 .send(
+                    CTX,
                     &receiver.get_pubk_hash().unwrap(),
                     receiver.get_address(),
                     msg,
@@ -724,6 +842,7 @@ mod tests {
 
             sender
                 .send(
+                    CTX,
                     &receiver1.get_pubk_hash().unwrap(),
                     receiver1.get_address(),
                     msg1.clone(),
@@ -732,6 +851,7 @@ mod tests {
 
             sender
                 .send(
+                    CTX,
                     &receiver2.get_pubk_hash().unwrap(),
                     receiver2.get_address(),
                     msg2.clone(),
@@ -784,6 +904,45 @@ mod tests {
         sender.close();
         receiver1.close();
         receiver2.close();
+    }
+
+    #[test]
+    fn test_deadletter() {
+        let port = 12015;
+        cleanup_storage(port, 3);
+
+        let (mut sender, mut receiver, _) = get_queue_channels(port);
+
+        // Close receiver server to simulate disconnection
+        let receiver_addr = receiver.get_address();
+        let receiver_pubk_hash = receiver.get_pubk_hash().unwrap();
+        receiver.close();
+        drop(receiver);
+
+        let msg = b"deadletter-message".to_vec();
+
+        sender
+            .send(CTX, &receiver_pubk_hash, receiver_addr, msg.clone())
+            .unwrap();
+
+        // Tick sender enough times to exceed MAX_SEND_ATTEMPTS
+        for _ in 0..=MAX_SEND_ATTEMPTS {
+            sender.tick().unwrap();
+        }
+
+        let deadletters = sender.check_deadletter().unwrap();
+        assert_eq!(deadletters.len(), 1);
+        match &deadletters[0] {
+            (ReceiveHandlerChannel::Msg(_, data), ctx) => {
+                assert_eq!(data, &msg);
+                assert_eq!(ctx, CTX);
+            }
+            _ => panic!("Expected dead letter message"),
+        }
+
+        // Cleanup
+        cleanup_storage(port, 3);
+        sender.close();
     }
 
     pub fn init_tracing() -> anyhow::Result<()> {
