@@ -2,7 +2,7 @@
 
 # Overview
 
-Rust BitVMX Broker is a message broker implemented in Rust. It provides a way to send and receive messages between clients using a synchronous server (`sync_server`), a client (`Client`), and a dual-channel (`DualChannel`) for communication, and a persistent queue-based channel (`QueueChannel`)
+Rust BitVMX Broker is a message broker implemented in Rust. It provides a way to send and receive messages between clients using a synchronous server (`sync_server`), a client (`Client`), and a dual-channel (`DualChannel`) or a persistent queue-based channel (`QueueChannel`) for communication
 
 The broker uses TLS certificates for authentication, verifying only the public key hash of each certificate. An allowlist controls which identities are trusted, and a routing table restricts which clients are allowed to communicate with each other.
 
