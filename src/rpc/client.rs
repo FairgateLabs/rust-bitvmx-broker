@@ -4,8 +4,9 @@ use crate::{
     rpc::{
         errors::MutexExt,
         tls_helper::{AllowListServerVerifier, Cert},
-        BrokerClient, BrokerConfig, Message, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
+        BrokerClient, BrokerConfig, Message,
     },
+    settings::{MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB},
 };
 use rustls::{pki_types::ServerName, RootCertStore};
 use std::{
