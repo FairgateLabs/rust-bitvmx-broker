@@ -7,12 +7,12 @@ use bitvmx_broker::{
     },
     rpc::{
         errors::{BrokerError, BrokerRpcError},
-        rate_limiter::{RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
         sync_client::SyncClient,
         sync_server::BrokerSync,
         tls_helper::Cert,
-        BrokerConfig, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
+        BrokerConfig,
     },
+    settings::{MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB, RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
 };
 use std::{
     fs::{self},

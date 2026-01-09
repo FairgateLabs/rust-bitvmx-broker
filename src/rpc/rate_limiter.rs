@@ -1,11 +1,8 @@
-use crate::rpc::errors::BrokerRpcError;
+use crate::{
+    rpc::errors::BrokerRpcError,
+    settings::{RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
+};
 use std::{collections::HashMap, sync::Mutex, time::Instant};
-
-// TODO: Adjust these values as needed
-// Note: every time a client wants to send, it also needs to do a ping, so 2 tokens are consumed per request
-pub const RATE_LIMIT_CAPACITY: usize = 10000; // Max 10000 requests
-pub const RATE_LIMIT_REFILL_RATE: f64 = 10.0; // 10 tokens per second
-pub const TOKENS_PER_MESSAGE: usize = 2; // 1 for ping + 1 for message
 
 #[derive(Clone)]
 pub struct RateLimiter {

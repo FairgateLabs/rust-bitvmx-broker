@@ -13,10 +13,6 @@ use storage_backend::{
 use tokio::runtime::Runtime;
 use tracing::{info, warn};
 
-const COMMS_ID: u8 = 0;
-const MAX_MSGS_PER_TICK_UTILIZATION: f64 = 0.5; // 50% of capacity
-const MAX_SEND_ATTEMPTS: u8 = 5; // Max attempts to send a message before moving to dead letter queue
-
 use crate::{
     broker_storage::BrokerStorage,
     channel::channel::LocalChannel,
@@ -26,12 +22,12 @@ use crate::{
         routing::RoutingTable,
     },
     rpc::{
-        errors::BrokerError,
-        rate_limiter::{RATE_LIMIT_CAPACITY, TOKENS_PER_MESSAGE},
-        sync_client::SyncClient,
-        sync_server::BrokerSync,
-        tls_helper::Cert,
+        errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
         BrokerConfig,
+    },
+    settings::{
+        COMMS_ID, MAX_MSGS_PER_TICK_UTILIZATION, MAX_SEND_ATTEMPTS, RATE_LIMIT_CAPACITY,
+        TOKENS_PER_MESSAGE,
     },
 };
 
@@ -309,8 +305,8 @@ impl QueueChannel {
                     // If max attempts reached, move to dead letter queue
                     if msg.attempts >= MAX_SEND_ATTEMPTS {
                         warn!(
-                            "Dropping message to {} after {} attempts",
-                            pubk_hash, msg.attempts
+                            "moving message to dead letter queue for {} at {} after {} attempts",
+                            pubk_hash, address_str, msg.attempts
                         );
                         self.enqueue_deadletter_msg(&pubk_hash.to_string(), &address, &raw)?;
                         self.storage.delete(&key)?;

@@ -1,6 +1,9 @@
-use crate::identification::{
-    errors::IdentificationError,
-    identifier::{Identifier, PubkHash, MAX_PUBKEY_HASH_LEN},
+use crate::{
+    identification::{
+        errors::IdentificationError,
+        identifier::{Identifier, PubkHash},
+    },
+    settings::MAX_PUBKEY_HASH_LEN,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{

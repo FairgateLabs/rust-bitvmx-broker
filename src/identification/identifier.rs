@@ -2,7 +2,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-pub const MAX_PUBKEY_HASH_LEN: usize = 128;
+use crate::settings::MAX_PUBKEY_HASH_LEN;
+
 pub type PubkHash = String;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

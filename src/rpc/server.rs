@@ -5,8 +5,9 @@ use crate::{
         errors::{BrokerRpcError, MutexExt},
         rate_limiter::RateLimiterManager,
         tls_helper::{AllowListClientVerifier, Cert},
-        Broker, MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB,
+        Broker,
     },
+    settings::{MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB},
 };
 use futures::StreamExt;
 use rustls::{RootCertStore, ServerConfig};

@@ -1,4 +1,5 @@
-use crate::{identification, rpc::MAX_MSG_SIZE_KB};
+use crate::identification;
+use crate::settings::MAX_MSG_SIZE_KB;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use thiserror::Error;

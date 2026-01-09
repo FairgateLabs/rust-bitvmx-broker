@@ -4,6 +4,7 @@ use crate::{
         errors::{BrokerError, BrokerRpcError},
         tls_helper::{init_tls, Cert},
     },
+    settings::SERVER_ID,
 };
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -14,13 +15,6 @@ pub mod server;
 pub mod sync_client;
 pub mod sync_server;
 pub mod tls_helper;
-
-pub const MAX_FRAME_SIZE_KB: usize = 1024; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
-                                           // encoded frame, not just the message payload
-                                           // As a result, the maximum allowed `msg` payload
-                                           // must be strictly smaller than this limit.
-pub const MAX_MSG_SIZE_KB: usize = MAX_FRAME_SIZE_KB - 4; // Leave some room for encoding overhead
-const SERVER_ID: u8 = 0; // Default ID for the server
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Message {
