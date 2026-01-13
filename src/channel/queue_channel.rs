@@ -39,7 +39,7 @@ pub enum ReceiveHandlerChannel {
 
 #[derive(Serialize, Deserialize)]
 struct OutgoingMsg {
-    payload: Vec<u8>,
+    payload: String,
     ctx: String, // Program context
     attempts: u8,
 }
@@ -214,7 +214,7 @@ impl QueueChannel {
         let idx = self.get_next_idx(&QueueType::OutQueue)?;
         let key = self.storage_out_key(idx, pubk_hash, address);
         let msg = OutgoingMsg {
-            payload: data,
+            payload: serde_json::to_string(&data)?,
             ctx: ctx.to_string(),
             attempts: 0, // initial attempt
         };
@@ -268,7 +268,6 @@ impl QueueChannel {
 
         for key in storage_keys {
             if let Some(raw) = self.storage.get::<_, String>(&key)? {
-                let mut msg: OutgoingMsg = serde_json::from_str(&raw)?;
                 let parts: Vec<&str> = key.split('/').collect();
                 if parts.len() < 7 {
                     continue;
@@ -283,14 +282,17 @@ impl QueueChannel {
                 if *sent >= max_per_dest {
                     continue; // destination exhausted for this tick
                 }
+                let mut msg: OutgoingMsg = serde_json::from_str(&raw)?;
 
                 info!(
-                    "Attempting to send queued message to {} at {}",
-                    pubk_hash, address_str
+                    "Attemp number {} to send queued message to {} at {}",
+                    msg.attempts + 1,
+                    pubk_hash,
+                    address_str
                 );
 
                 if self
-                    .internal_send(&address, pubk_hash, serde_json::to_string(&msg.payload)?)
+                    .internal_send(&address, pubk_hash, &msg.payload)
                     .is_ok_and(|x| x)
                 {
                     self.storage.delete(&key)?;
@@ -326,7 +328,7 @@ impl QueueChannel {
         &self,
         address: &SocketAddr,
         dest_pubk_hash: &str,
-        msg: String,
+        msg: &str,
     ) -> Result<bool, BrokerError> {
         // It doesnt check address when sending data, only when receiving
         let server_config = BrokerConfig::new(
@@ -343,7 +345,7 @@ impl QueueChannel {
         )?;
 
         let identifier = Identifier::new(dest_pubk_hash.to_string(), COMMS_ID);
-        sync_client.send_msg(COMMS_ID, identifier, msg)
+        sync_client.send_msg(COMMS_ID, identifier, msg.to_string())
     }
 
     fn process_in_queue(&self) -> Result<(), BrokerError> {
@@ -412,7 +414,7 @@ impl QueueChannel {
                         // No receiver id in deadletter, use COMMS_ID as default
                         let identifier = Identifier::new(pubk_hash.to_string(), COMMS_ID);
                         let msg = serde_json::from_str::<OutgoingMsg>(&x)?;
-                        let data = msg.payload;
+                        let data = serde_json::from_str::<Vec<u8>>(&msg.payload)?;
                         (identifier, data, Some(msg.ctx))
                     }
                     _ => continue,
