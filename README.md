@@ -2,7 +2,7 @@
 
 # Overview
 
-Rust BitVMX Broker is a message broker implemented in Rust. It provides a way to send and receive messages between clients using a synchronous server (`sync_server`), a client (`Client`), and a dual-channel (`DualChannel`) for communication.
+Rust BitVMX Broker is a message broker implemented in Rust. It provides a way to send and receive messages between clients using a synchronous server (`sync_server`), a client (`Client`), and a dual-channel (`DualChannel`) or a persistent queue-based channel (`QueueChannel`) for communication
 
 The broker uses TLS certificates for authentication, verifying only the public key hash of each certificate. An allowlist controls which identities are trusted, and a routing table restricts which clients are allowed to communicate with each other.
 
@@ -14,12 +14,14 @@ It is not production-ready, has not been audited, and future updates may introdu
 ## Features
 
 - 🖥️ **Synchronous server** for handling message requests  
-- 📡 **Asynchronous client** for sending and receiving messages  
+- 📡 **Asynchronous and synchronous client** for sending and receiving messages  
 - 🔄 **Dual-channel** for bidirectional communication  
 - 🔐 **TLS authentication** with self-signed certificates  
 - 🧾 **Verification** by certificate public key hash  
 - ✅ **AllowList management** with optional wildcard  
-- 🗺️ **Routing table** to restrict client-to-client communication  
+- 🗺️ **Routing table** to restrict client-to-client communication
+- ⏱️ **Rate-limited message delivery**
+- ☠️ **Dead letter queue** for undeliverable messages
 
 ## Methods
 
@@ -36,15 +38,33 @@ It is not production-ready, has not been audited, and future updates may introdu
 ### Communication
 
 #### Client
+The `Client` API provides direct message-based communication with explicit
+acknowledgement handling.
 - **send_msg**: Send a message to a destination identifier  
 - **get_msg**: Receive a message for a given identifier  
 - **ack**: Acknowledge receipt of a message  
 
 #### DualChannel
+`DualChannel` is a higher-level abstraction built on top of `Client` that provides bidirectional communication.
 - **send**: Send a message to a specific destination identifier  
 - **send_server**: Send a message directly to the server  
 - **recv**: Receive the next available message  
 
+#### QueueChannel
+
+`QueueChannel` is a persistent messaging abstraction designed for reliable delivery and fairness across destinations.
+Messages are stored in queues and processed incrementally using a tick-based model. Delivery attempts are retried automatically.
+
+Queues managed internally:
+- **OutQueue**: Messages pending delivery
+- **InQueue**: Successfully received messages
+- **DeadLetterQueue**: Messages that could not be delivered
+
+Main methods:
+- **send**: Enqueue a message for delivery
+- **tick**: Process outgoing and incoming queues
+- **check_receive**: Retrieve received messages
+- **check_deadletter**: Retrieve messages that failed delivery
 
 ## Usage
 
@@ -120,6 +140,46 @@ fn main() {
     user_1.send(client2_identifier, "Hello!".to_string()).unwrap();
     let msg = user_2.recv().unwrap().unwrap();
     server.close();
+}
+```
+
+### Creating a QueueChannel 
+```rust
+fn main() {
+    let queue_channel1 = QueueChannel::new(
+        "testqueue",
+        sender.address,
+        &sender.privk,
+        sender.storage,
+        None,
+        allow_list,
+        routing_table,
+    ).unwrap();
+
+    let queue_channel2 = QueueChannel::new(
+        "testqueue",
+        receiver.address,
+        &receiver.privk,
+        receiver.storage,
+        None,
+        allow_list,
+        routing_table,
+    ).unwrap();
+
+    queue_channel1.send(
+        "example_ctx",
+        &queue_channel2.get_pubk_hash().unwrap(),
+        queue_channel2.get_address(),
+        b"Hello, Queue!".to_vec(),
+    ).unwrap();
+
+    queue_channel1.tick().unwrap();
+    queue_channel2.tick().unwrap();
+
+    let received = queue_channel2.check_receive().unwrap();
+
+    queue_channel1.close();
+    queue_channel2.close();
 }
 ```
 

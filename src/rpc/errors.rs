@@ -1,4 +1,5 @@
-use crate::{identification, rpc::MAX_MSG_SIZE_KB};
+use crate::identification;
+use crate::settings::MAX_MSG_SIZE_KB;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use thiserror::Error;
@@ -71,6 +72,9 @@ pub enum BrokerError {
 
     #[error("Message too large. Max size is {MAX_MSG_SIZE_KB} KB, but got {0} KB")]
     MessageTooLarge(usize),
+
+    #[error("Expected ctx {}, but got {}", expected, got)]
+    InvalidMessageContext { expected: String, got: String },
 
     #[error("Other error: {0}")]
     Other(String),
