@@ -76,6 +76,9 @@ pub enum BrokerError {
     #[error("Expected ctx {}, but got {}", expected, got)]
     InvalidMessageContext { expected: String, got: String },
 
+    #[error("Time error: {0}")]
+    TimeError(#[from] std::time::SystemTimeError),
+
     #[error("Other error: {0}")]
     Other(String),
 }

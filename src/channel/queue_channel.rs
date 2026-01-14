@@ -15,7 +15,10 @@ use tracing::{info, warn};
 
 use crate::{
     broker_storage::BrokerStorage,
-    channel::channel::LocalChannel,
+    channel::{
+        channel::LocalChannel,
+        retry_helper::{now_ms, RetryPolicy, RetryState},
+    },
     identification::{
         allow_list::AllowList,
         identifier::{Identifier, PubkHash},
@@ -27,7 +30,7 @@ use crate::{
     },
     settings::{
         COMMS_ID, MAX_MSGS_PER_TICK_UTILIZATION, MAX_SEND_ATTEMPTS, RATE_LIMIT_CAPACITY,
-        TOKENS_PER_MESSAGE,
+        RETRY_MAX_DELAY_MSECS, RETRY_MIN_DELAY_MSECS, TOKENS_PER_MESSAGE,
     },
 };
 
@@ -41,7 +44,7 @@ pub enum ReceiveHandlerChannel {
 struct OutgoingMsg {
     payload: String,
     ctx: String, // Program context
-    attempts: u8,
+    retry: RetryState,
 }
 
 pub struct QueueChannel {
@@ -53,6 +56,7 @@ pub struct QueueChannel {
     storage: Rc<Storage>,
     allow_list: Arc<Mutex<AllowList>>,
     routing_table: Arc<Mutex<RoutingTable>>,
+    retry_policy: RetryPolicy,
     rt: Arc<Mutex<Runtime>>,
 }
 
@@ -113,6 +117,12 @@ impl QueueChannel {
             broker_storage.clone(),
         );
 
+        let retry_policy = RetryPolicy::new(
+            RETRY_MIN_DELAY_MSECS,
+            RETRY_MAX_DELAY_MSECS,
+            MAX_SEND_ATTEMPTS,
+        );
+
         let rt = Arc::new(Mutex::new(Runtime::new()?));
 
         Ok(Self {
@@ -124,6 +134,7 @@ impl QueueChannel {
             storage,
             allow_list,
             routing_table,
+            retry_policy,
             rt,
         })
     }
@@ -216,7 +227,7 @@ impl QueueChannel {
         let msg = OutgoingMsg {
             payload: serde_json::to_string(&data)?,
             ctx: ctx.to_string(),
-            attempts: 0, // initial attempt
+            retry: RetryState::new(now_ms()?), // Initial attempt
         };
 
         self.storage.set(&key, serde_json::to_string(&msg)?, None)?;
@@ -265,6 +276,7 @@ impl QueueChannel {
         // send up to 50% of max capacity messages per tick
         let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
         let max_per_dest = self.max_msgs_per_tick(MAX_MSGS_PER_TICK_UTILIZATION); // use 50% of capacity
+        let now = now_ms()?;
 
         for key in storage_keys {
             if let Some(raw) = self.storage.get::<_, String>(&key)? {
@@ -283,10 +295,13 @@ impl QueueChannel {
                     continue; // destination exhausted for this tick
                 }
                 let mut msg: OutgoingMsg = serde_json::from_str(&raw)?;
+                if msg.retry.is_ready(now) == false {
+                    continue;
+                }
 
                 info!(
                     "Attemp number {} to send queued message to {} at {}",
-                    msg.attempts + 1,
+                    msg.retry.get_attempts() + 1,
                     pubk_hash,
                     address_str
                 );
@@ -302,20 +317,22 @@ impl QueueChannel {
                         "Failed to send queued message to {} at {}",
                         pubk_hash, address_str
                     );
-                    msg.attempts += 1;
+
+                    msg.retry.record_attempt(&self.retry_policy, now);
 
                     // If max attempts reached, move to dead letter queue
-                    if msg.attempts >= MAX_SEND_ATTEMPTS {
+                    if self.retry_policy.is_exhausted(&msg.retry) {
                         warn!(
                             "moving message to dead letter queue for {} at {} after {} attempts",
-                            pubk_hash, address_str, msg.attempts
+                            pubk_hash,
+                            address_str,
+                            msg.retry.get_attempts()
                         );
                         self.enqueue_deadletter_msg(&pubk_hash.to_string(), &address, &raw)?;
                         self.storage.delete(&key)?;
                     } else {
                         self.storage.set(&key, serde_json::to_string(&msg)?, None)?;
                     }
-
                     *sent = max_per_dest; // stop trying to send to this destination this tick
                 }
             }
@@ -495,13 +512,11 @@ impl QueueChannel {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::{fs, path::PathBuf};
-
     use tracing_subscriber::{
         fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
     };
-
-    use super::*;
 
     const PRIVK1: &str = "b'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDhzkbFynswfys/\nVNbM4hzYNKCdAuxYI/jysOPkRHGhlJe+71EE9F2CpAZnjevBsUWxi3+LatfMZjwi\nUz/l3iC6ow8Dsar0BO6RmWQR8Uf/1sx+WNjBk2woISPb60oXbXYj8AVUqYUUSo/Q\nRF5kuGT7dsMvUAx8Irn93w4A5VXx+FLn3r38Tymv7qOMT5cO1xrNStsluBD1RdPj\nz+B6b+7woAKqkrNFR+ZH0HUUKldA+A+pGElQLODyLB7OwxHgKtEsFdyiiDuKW2mP\nsk2dsab9HCNdo9cViA9UbeykDXq7h0/7gYg9XBH8LqqXYpSk/LE6T8k1RVa9EBxV\nRpYqlvFPAgMBAAECggEAV64pfRQq0aIPwP/IiLYkTS/iThWcgH03ZcWaOED7fqqc\nYd+7rhjVVq0qb3uEWCnlzhNE63YJZa0tHIcHANNIEjDO27hZkXd4y8CsQutV8doO\nfeEyCbic/tgffH3Yv1AZ18qTx1QsAL0TKuPhY2rWi26KTAzhTDKP1iyO23ox7Uqs\nwWChuHWyw7SmECRmjKOjTLs1Axea3fos6ERgEv/KZiTi+a9he5JuHOXO6aKTvHI7\nlTAMdloy1CnK6G3Ql7LfBeX20hIwDSZNgp5naB6NjJiDTbxxlGj7apW6hquzJpRP\n1Tn2YLvVKl5bdAOHh44wHBhZR9COjxUT+uASYRb5wQKBgQD7FTe3VPrsi6ejo7db\n9SwTUjsTQKoxrfoNc0xPzGGwKyyArGM++NQI1CZuQQDXVoYl+JC1JOcTLjjW/TYu\nwVGAr63bjtYjU0e8NZzum3nIZ7rpyHJpnbCLBc678KNCvblD4u/Vl1bx/9vRiCTx\n9S0r/LJ54Jr3Ohx9feYERc4K/QKBgQDmOlWNHwFlC2pkYI/0biXWybQZWvz+C5x3\nJO6tf0ykRk2sBEcp07JMhJsE+r4B+lHNSWalkX409Fn6x2ch/6tLP0X+viM5nr+2\nRpGHLpUBeq4+RKMmUS/NgY2DoRV1DRnfk4Vt0BZy5Voc4OVQz0zohwFzYhY60ThR\nV3UJ9HbdOwKBgQCcBS8+CNxzqMRe9xi1V8AvsWVsLT6U6Fr9iKve2k3JvspEmtqB\nAvYfFlVbJaF0Lhvl9HNXXLsKPCqtzWKh4xbWNFSAnl2KTfHBjj8aNhqS4YJQS3Jt\nFsPhX5Z7SqjojCRXfukxfH1Wm3ro1QTAJW4Qa1IsUdl5zu5tPJJ2DTpfsQKBgCii\nXR0mPsnFxQZoYKAEnNsXCJl9DLAN/pSsyQ+IK0/HNMhKjQDd41dMBExRsR2KP8va\ny6onTr4r7oGrlhFTHbmPNlxq1K7DzRRvyhmw6A21yHEnDiCiLay40/BKiw34vPtP\n/znNg1jOECSOsQqdO/bCdUgXJNNGwAjjRb33Ds+nAoGAW76wLk1lwD2tZ8KgMRUU\ni0BkY7eDXPskxCP6BjFq10J/1dC/dsLO9mZfwl2BJ2D+gGmcIzdSb5p1LkuniGuv\nV+/lSa8bdUKwtd5l+CZ0OMqmHryQZICqGeG5uREYv5eqs4mDiuM8QkZdOZUKWzPc\nwWJXrp5cQtvgjS/HyjHB69o=\n-----END PRIVATE KEY-----\n'";
     const PRIVK2: &str = "b'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCeJYILLK2EpGP9\nCrlEeHL1hYODftAUxJTacRezNNuyAqqP04H0IFffXhdz/f54HnYnaN1VrMGNQlR5\nBashFjZa7fVEFp3osVgNEPNu63MA1Gr7o4BakopRbMx7jUyhmlJXNP3VX5tZEha+\nV7GOZEeh2Ej3pehnE/E6SD16Ez9aaGydFgrMALHjT2NfucK0XCcDvMbq53PsBaLm\nnH5TLnvtZvYmdyDoUe+RvlwaRAHv4AWDOElhQrj970giHWY6i9QgqrlTIYN5cQrD\nM6kNj1SaBtCNpG/wIK3NMLW7PAYeEKTopwdsFuVL+1e0IAsTIVpDC1mb3r2GlPji\n0GaMLBAHAgMBAAECggEAFPHDvMYgfuIkqeULL1HCa9jQV5Bqb22vhxSWPnIgLH2k\n6CJrYhEMgjUcZwy68F6caFC/i3KzOYmQ1WxWQy4Fadp88pUKOcCO+EAH9WcyVmhL\neOMpAxXIQstlc3F9tiNRh2IpweIFGXFHWNMVXVXTlNAnrcCnvEsMVhsuJSY6bDcV\n5ejQKE8kM8F30FzD2mii36XamsreMpQBAIlm0i1HH/8PpynUQ12bb2M0T/FR9C5V\nAbfeLUOgrzWgBs9hxmlBzILusJFjv7OvwIkF97GgoAyLKqFmxzncwQUTqh9iH2Js\nemN6Qg+vPIg2Et8Ku9XEX+CSXvDwFckB2Z14jqQw8QKBgQDPHDzAFDSTl+aPH+vd\n01wxtaFyP7KP2OaRabW1qzTPww87agbN3wPJqBBf9lEjVeGNjLrp2NyHX6Wfnt5V\nlpeWts13/M43rju2JJwOrfZnwJsJgQ9ZEQw30e1LWeiGpr0kcWlv2059tEiKgBwY\nNlw6evsCyFjrIuSqgg3riO9xMQKBgQDDel5TfTJ3BJZlgFYnU1YxUZDQ1mcMDnSK\ntdRLdpVWTEkjzf0a6rGJYla0NoqQdH9qDfimVMY6+RQLZVdhhXDVnQuwV0CK9ERY\nQWy/PEoPvIagTXgKJ8fKLYcG420fJJtPmTSEoPZg1PXtuABNj/68bI7ONL5CY6gO\n8iFJU0sGtwKBgA6mlLWRuFZofGrLe0fp16+8hXsrflomocjPjYcYYVgBGGa/jVOq\n3v244c+oAP1a6eW1etNn/9GjtnegKWIskPScYdSHEZ9mt9qepFt1euTD/zOg6ZEH\nX7HjK8IUzhoYWXDmhOrgvKCvzCHgBhzAW63XXUJJIeEgSsS1Bn8O5MFBAoGAMuiv\noDa+6dg8AvtFdMBzdiyz9m+gLrelCmsIew7LHcqIUdbX0CbHTexagFykAbMVa91v\noIH7jmhIHB+sfi1ukXNxE9/lY0rycbm4RKXC9A45UY5bcOmjUrhArj6UsMOr3zMb\nRl9VSyqrUdnV2l1iDliHaJS76DZkEmBk4t/abkkCgYEAxkk3skKgRJPt2bFLzdHV\n3Au24P/Cyqf1LIfXpuJcMBfAhw55g6DOLR4O0BH+s7cZk8hrGVeI9WyhC5EgzZrF\nBjTlZFqFtsz5psj1oNqgr/JnO2fL3csxbDR81q9uSSzdlN7BlzBpdQahi53K9MHi\nZDNGUy5a/PopNnWSzfHYUas=\n-----END PRIVATE KEY-----\n'";
@@ -518,7 +533,7 @@ mod tests {
     }
 
     fn get_storage(port: u16) -> Rc<Storage> {
-        let storage_path = format!("/tmp/test_storage_{}.db", port);
+        let storage_path = format!("/tmp/test_storage_{}", port);
         let config = StorageConfig::new(storage_path.clone(), None);
         let storage = Storage::new(&config).unwrap();
         Rc::new(storage)
@@ -635,8 +650,8 @@ mod tests {
 
     fn cleanup_storage(start_port: u16, count: u16) {
         for port in start_port..start_port + count {
-            let _ = fs::remove_dir_all(&PathBuf::from(format!("/tmp/storage_queue_{}.db", port)));
-            let _ = fs::remove_file(&PathBuf::from(format!("/tmp/broker_comms_{}.db", port)));
+            let _ = fs::remove_dir_all(&PathBuf::from(format!("/tmp/test_storage_{}", port)));
+            let _ = fs::remove_dir_all(&PathBuf::from(format!("/tmp/broker_comms_{}", port)));
         }
     }
 
@@ -646,7 +661,7 @@ mod tests {
         let port = 12000;
         cleanup_storage(port, 3);
 
-        let (mut queue_channel1, mut queue_channel2, _queue_channel3) = get_queue_channels(port);
+        let (mut queue_channel1, mut queue_channel2, mut queue_channel3) = get_queue_channels(port);
 
         let msg = b"Hello, World!".to_vec();
 
@@ -670,9 +685,13 @@ mod tests {
         );
 
         // Close and cleanup
-        cleanup_storage(port, 3);
         queue_channel1.close();
         queue_channel2.close();
+        queue_channel3.close();
+        drop(queue_channel1);
+        drop(queue_channel2);
+        drop(queue_channel3);
+        cleanup_storage(port, 3);
     }
 
     #[test]
@@ -680,7 +699,7 @@ mod tests {
         let port = 12003;
         cleanup_storage(port, 3);
 
-        let (mut queue_channel1, mut queue_channel2, _queue_channel3) = get_queue_channels(port);
+        let (mut queue_channel1, mut queue_channel2, mut queue_channel3) = get_queue_channels(port);
 
         let msg1 = b"Message from Channel 1".to_vec();
         let msg2 = b"Message from Channel 2".to_vec();
@@ -722,9 +741,13 @@ mod tests {
         );
 
         // Close and cleanup
-        cleanup_storage(port, 3);
         queue_channel1.close();
         queue_channel2.close();
+        queue_channel3.close();
+        drop(queue_channel1);
+        drop(queue_channel2);
+        drop(queue_channel3);
+        cleanup_storage(port, 3);
     }
 
     #[test]
@@ -732,7 +755,7 @@ mod tests {
         let port = 12006;
         cleanup_storage(port, 3);
 
-        let (mut queue_channel1, mut queue_channel2, _queue_channel3) = get_queue_channels(port);
+        let (mut queue_channel1, mut queue_channel2, mut queue_channel3) = get_queue_channels(port);
 
         let msg = b"Persistent Message".to_vec();
 
@@ -766,9 +789,13 @@ mod tests {
         );
 
         // Close and cleanup
-        cleanup_storage(port, 3);
         queue_channel1.close();
         queue_channel2.close();
+        queue_channel3.close();
+        drop(queue_channel1);
+        drop(queue_channel2);
+        drop(queue_channel3);
+        cleanup_storage(port, 3);
     }
 
     #[test]
@@ -776,7 +803,7 @@ mod tests {
         let port = 12009;
         cleanup_storage(port, 3);
 
-        let (mut sender, mut receiver, _) = get_queue_channels(port);
+        let (mut sender, mut receiver, mut queue_channel3) = get_queue_channels(port);
 
         let mut sent_msgs = Vec::new();
         let mut expected_hashes = Vec::new();
@@ -814,9 +841,13 @@ mod tests {
             }
         }
 
-        cleanup_storage(port, 3);
         sender.close();
         receiver.close();
+        queue_channel3.close();
+        drop(sender);
+        drop(receiver);
+        drop(queue_channel3);
+        cleanup_storage(port, 3);
     }
 
     #[test]
@@ -898,10 +929,13 @@ mod tests {
         assert_eq!(recv1_all, sent_msgs_r1);
         assert_eq!(recv2_all, sent_msgs_r2);
 
-        cleanup_storage(port, 3);
         sender.close();
         receiver1.close();
         receiver2.close();
+        drop(sender);
+        drop(receiver1);
+        drop(receiver2);
+        cleanup_storage(port, 3);
     }
 
     #[test]
@@ -909,7 +943,7 @@ mod tests {
         let port = 12015;
         cleanup_storage(port, 3);
 
-        let (mut sender, mut receiver, _) = get_queue_channels(port);
+        let (mut sender, mut receiver, mut queue_channel3) = get_queue_channels(port);
 
         // Close receiver server to simulate disconnection
         let receiver_addr = receiver.get_address();
@@ -923,24 +957,39 @@ mod tests {
             .send(CTX, &receiver_pubk_hash, receiver_addr, msg.clone())
             .unwrap();
 
-        // Tick sender enough times to exceed MAX_SEND_ATTEMPTS
-        for _ in 0..=MAX_SEND_ATTEMPTS {
+        // Keep ticking until message appears in dead letter queue or timeout
+        let start = std::time::Instant::now();
+        let timeout =
+            std::time::Duration::from_millis(RETRY_MAX_DELAY_MSECS * MAX_SEND_ATTEMPTS as u64);
+
+        loop {
             sender.tick().unwrap();
-        }
 
-        let deadletters = sender.check_deadletter().unwrap();
-        assert_eq!(deadletters.len(), 1);
-        match &deadletters[0] {
-            (ReceiveHandlerChannel::Msg(_, data), ctx) => {
-                assert_eq!(data, &msg);
-                assert_eq!(ctx, CTX);
+            let deadletters = sender.check_deadletter().unwrap();
+            if !deadletters.is_empty() {
+                assert_eq!(deadletters.len(), 1);
+                match &deadletters[0] {
+                    (ReceiveHandlerChannel::Msg(_, data), ctx) => {
+                        assert_eq!(data, &msg);
+                        assert_eq!(ctx, CTX);
+                    }
+                    _ => panic!("Expected dead letter message"),
+                }
+                break;
             }
-            _ => panic!("Expected dead letter message"),
+
+            if start.elapsed() > timeout {
+                panic!("Timed out waiting for message to reach dead letter queue");
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
-        // Cleanup
-        cleanup_storage(port, 3);
         sender.close();
+        queue_channel3.close();
+        drop(sender);
+        drop(queue_channel3);
+        cleanup_storage(port, 3);
     }
 
     pub fn init_tracing() -> anyhow::Result<()> {
