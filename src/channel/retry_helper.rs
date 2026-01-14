@@ -4,10 +4,10 @@ use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
-    step_ms: u64,
-    min_delay_ms: u64,
-    max_delay_ms: u64,
-    max_attempts: u8,
+    pub step_ms: u64,
+    pub min_delay_ms: u64,
+    pub max_delay_ms: u64,
+    pub max_attempts: u8,
 }
 
 impl RetryPolicy {
@@ -28,6 +28,10 @@ impl RetryPolicy {
             max_delay_ms,
             max_attempts,
         }
+    }
+
+    pub fn default() -> Self {
+        Self::new(100, 10_000, 10)
     }
 
     pub fn get_next_delay(&self, attempts: u8) -> u64 {
