@@ -1,5 +1,5 @@
-use crate::identification;
 use crate::settings::MAX_MSG_SIZE_KB;
+use crate::{channel::retry_helper::RetryPolicyError, identification};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use thiserror::Error;
@@ -75,6 +75,12 @@ pub enum BrokerError {
 
     #[error("Expected ctx {}, but got {}", expected, got)]
     InvalidMessageContext { expected: String, got: String },
+
+    #[error("Time error: {0}")]
+    TimeError(#[from] std::time::SystemTimeError),
+
+    #[error("Retry policy error: {0}")]
+    RetryPolicyError(#[from] RetryPolicyError),
 
     #[error("Other error: {0}")]
     Other(String),
