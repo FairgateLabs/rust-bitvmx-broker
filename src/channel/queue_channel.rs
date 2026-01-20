@@ -299,12 +299,14 @@ impl QueueChannel {
                     continue;
                 }
 
-                info!(
-                    "Attemp number {} to send queued message to {} at {}",
-                    msg.retry.get_attempts() + 1,
-                    pubk_hash,
-                    address_str
-                );
+                if msg.retry.get_attempts() > 0 {
+                    info!(
+                        "Attempt number {} to send queued message to {} at {}",
+                        msg.retry.get_attempts() + 1,
+                        pubk_hash,
+                        address_str
+                    );
+                }
 
                 if self
                     .internal_send(&address, pubk_hash, &msg.payload)
@@ -376,10 +378,12 @@ impl QueueChannel {
         }
         self.storage.commit_transaction(tx)?;
 
-        info!(
-            "Moved {} messages from localchannel to inqueu",
-            msg_uids.len()
-        );
+        if msg_uids.len() > 0 {
+            info!(
+                "Moved {} messages from localchannel to inqueu",
+                msg_uids.len()
+            );
+        }
         for uid in msg_uids {
             self.local_channel.ack(uid)?;
         }
