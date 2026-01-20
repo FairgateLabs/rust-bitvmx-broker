@@ -48,8 +48,8 @@ impl RetryPolicy {
         })
     }
 
-    pub fn default() -> Result<RetryPolicy, RetryPolicyError> {
-        Self::new(100, 10_000, 10)
+    pub fn default() -> Self {
+        Self::new(100, 10_000, 10).unwrap()
     }
 
     pub fn get_next_delay(&self, attempts: u8) -> u64 {
