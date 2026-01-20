@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use thiserror::Error;
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -11,26 +12,43 @@ pub struct RetryPolicy {
 }
 
 impl RetryPolicy {
-    pub fn new(min_delay_ms: u64, max_delay_ms: u64, max_attempts: u8) -> Self {
-        assert!(min_delay_ms <= max_delay_ms);
-        assert!(max_attempts > 1, "max_attempts must be > 1");
-        assert!(
-            max_delay_ms - min_delay_ms >= (max_attempts as u64 - 1),
-            "max_delay - min_delay must be at least max_attempts - 1"
-        );
+    pub fn new(
+        min_delay_ms: u64,
+        max_delay_ms: u64,
+        max_attempts: u8,
+    ) -> Result<Self, RetryPolicyError> {
+        if min_delay_ms > max_delay_ms {
+            return Err(RetryPolicyError::MinGreaterThanMax {
+                min: min_delay_ms,
+                max: max_delay_ms,
+            });
+        }
+
+        if max_attempts <= 1 {
+            return Err(RetryPolicyError::InvalidMaxAttempts(max_attempts));
+        }
+
+        let required_range = max_attempts as u64 - 1;
+        if max_delay_ms - min_delay_ms < required_range {
+            return Err(RetryPolicyError::DelayRangeTooSmall {
+                min: min_delay_ms,
+                max: max_delay_ms,
+                attempts: max_attempts,
+            });
+        }
 
         let steps = max_attempts as u64 - 1;
         let step_ms = (max_delay_ms - min_delay_ms).max(steps) / steps;
 
-        Self {
+        Ok(Self {
             step_ms,
             min_delay_ms,
             max_delay_ms,
             max_attempts,
-        }
+        })
     }
 
-    pub fn default() -> Self {
+    pub fn default() -> Result<RetryPolicy, RetryPolicyError> {
         Self::new(100, 10_000, 10)
     }
 
@@ -80,4 +98,19 @@ impl RetryState {
 
 pub fn now_ms() -> Result<u64, std::time::SystemTimeError> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
+}
+
+#[derive(Error, Debug)]
+pub enum RetryPolicyError {
+    #[error("min_delay_ms ({min}) must be <= max_delay_ms ({max})")]
+    MinGreaterThanMax { min: u64, max: u64 },
+
+    #[error("max_attempts must be > 1, got {0}")]
+    InvalidMaxAttempts(u8),
+
+    #[error(
+        "max_delay_ms - min_delay_ms must be at least max_attempts - 1 \
+         (min: {min}, max: {max}, max_attempts: {attempts})"
+    )]
+    DelayRangeTooSmall { min: u64, max: u64, attempts: u8 },
 }

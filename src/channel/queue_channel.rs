@@ -121,7 +121,7 @@ impl QueueChannel {
             RETRY_MIN_DELAY_MSECS,
             RETRY_MAX_DELAY_MSECS,
             MAX_SEND_ATTEMPTS,
-        );
+        )?;
 
         let rt = Arc::new(Mutex::new(Runtime::new()?));
 
