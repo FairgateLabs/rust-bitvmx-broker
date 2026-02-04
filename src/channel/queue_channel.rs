@@ -312,7 +312,7 @@ impl QueueChannel {
                     .internal_send(&address, pubk_hash, &msg.payload)
                     .is_ok_and(|x| x)
                 {
-                    self.storage.delete(&key)?;
+                    self.storage.remove(&key, None)?;
                     *sent += 1;
                 } else {
                     warn!(
@@ -331,7 +331,7 @@ impl QueueChannel {
                             msg.retry.get_attempts()
                         );
                         self.enqueue_deadletter_msg(&pubk_hash.to_string(), &address, &raw)?;
-                        self.storage.delete(&key)?;
+                        self.storage.remove(&key, None)?;
                     } else {
                         self.storage.set(&key, serde_json::to_string(&msg)?, None)?;
                     }
@@ -443,7 +443,7 @@ impl QueueChannel {
 
                 messages.push((ReceiveHandlerChannel::Msg(identifier, data), ctx));
 
-                self.storage.delete(&key)?;
+                self.storage.remove(&key, None)?;
             }
         }
 

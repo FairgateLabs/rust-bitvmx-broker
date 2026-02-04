@@ -91,7 +91,7 @@ impl StorageApi for BrokerStorage {
             return Ok(false);
         }
         let key = keys.first().unwrap();
-        if storage_lock.delete(key).is_err() {
+        if storage_lock.remove(key, None).is_err() {
             return Ok(false);
         }
         Ok(true)
