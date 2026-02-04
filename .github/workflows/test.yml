@@ -26,6 +26,5 @@ jobs:
       submodule_path: 'rust-bitvmx-broker'
       cargo_lock_path: 'rust-bitvmx-broker/Cargo.lock'
       target_path: 'rust-bitvmx-broker/target'
-      submodule_branches: '{}'
     secrets: inherit
     
