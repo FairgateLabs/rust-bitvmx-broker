@@ -1,5 +1,6 @@
 use crate::settings::MAX_MSG_SIZE_KB;
 use crate::{channel::retry_helper::RetryPolicyError, identification};
+use bitvmx_settings::errors::ConfigError;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use thiserror::Error;
@@ -84,6 +85,9 @@ pub enum BrokerError {
 
     #[error("Other error: {0}")]
     Other(String),
+
+    #[error("Setting file error: {0}")]
+    Settings(#[from] ConfigError),
 }
 
 impl<T> From<PoisonError<T>> for BrokerError {

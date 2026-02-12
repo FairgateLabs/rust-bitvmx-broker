@@ -1,5 +1,4 @@
 use std::{
-    fs,
     net::{IpAddr, Ipv4Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -11,6 +10,7 @@ use std::{
 
 #[cfg(feature = "storagebackend")]
 use bitvmx_broker::broker_storage;
+use bitvmx_settings::settings;
 #[cfg(feature = "storagebackend")]
 use broker_storage::BrokerStorage;
 #[cfg(feature = "storagebackend")]
@@ -63,8 +63,9 @@ fn wait_ctrl() {
 fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
-    let privk = fs::read_to_string("certs/services.key").expect("Failed to read private key file");
-    let cert = Cert::new_with_privk(&privk).unwrap();
+    let privk = settings::decrypt_or_read_file("certs/services.key")
+        .expect("Failed to read private key file");
+    let cert = Cert::new_with_privk(privk.as_str()).unwrap();
     let allow_list =
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
     let routing = RoutingTable::new();

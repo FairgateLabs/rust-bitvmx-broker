@@ -86,17 +86,9 @@ impl Cert {
     }
     pub fn from_key_file(key_path: &str) -> Result<Self, BrokerError> {
         let key_pem = std::fs::read_to_string(key_path)?;
-        let cert = Self::create_cert(Some(&key_pem))?;
-        let (generated_key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, CA_KEY)?;
-        let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
-        Ok(Self {
-            key_pem: generated_key_pem,
-            cert_pem,
-            spki_der,
-            ca_der,
-            pubk_hash,
-        })
+        Self::new_with_privk(&key_pem)
     }
+
     pub fn from_file(path: &str, name: &str) -> Result<Self, BrokerError> {
         let cert_path = format!("{path}/{name}.pem");
         let key_path = format!("{path}/{name}.key");
@@ -252,12 +244,6 @@ impl Cert {
         // Hash SPKI
         let fingerprint = digest(&SHA256, spki);
         Ok(hex::encode(fingerprint.as_ref()))
-    }
-
-    pub fn get_pubk_hash_from_privk(privk: &str) -> Result<String, BrokerError> {
-        let cert = Cert::new_with_privk(privk)?;
-        let fingerprint = cert.get_pubk_hash()?;
-        Ok(fingerprint)
     }
 }
 
