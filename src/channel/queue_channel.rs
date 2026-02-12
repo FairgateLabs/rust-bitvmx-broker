@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use bitvmx_settings::settings;
 use serde::{Deserialize, Serialize};
 use storage_backend::{
     storage::{KeyValueStore, Storage},
@@ -150,7 +151,7 @@ impl QueueChannel {
     ) -> Result<Self, BrokerError> {
         let allow_list = AllowList::from_file(allow_list)?;
         let routing_table = RoutingTable::from_file(routing_table)?;
-        let privk = std::fs::read_to_string(privk)?;
+        let privk = settings::decrypt_or_read_file(privk)?;
         Self::new(
             name,
             address,
