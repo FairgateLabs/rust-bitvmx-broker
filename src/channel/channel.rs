@@ -1,3 +1,5 @@
+use tokio::runtime::Runtime;
+
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
@@ -25,6 +27,29 @@ impl DualChannel {
         allow_list: Arc<Mutex<AllowList>>,
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
         let client = SyncClient::new(config, my_cert.clone(), allow_list)?;
+        let my_id = Identifier {
+            pubkey_hash: my_cert.get_pubk_hash()?,
+            id: my_id.unwrap_or(0), // Default to 0 if not provided
+        };
+        let dest_id = Identifier {
+            pubkey_hash: config.get_pubk_hash(),
+            id: config.get_id(),
+        };
+        Ok(Self {
+            client,
+            my_id,
+            dest_id,
+        })
+    }
+
+    pub fn new_with_runtime(
+        config: &BrokerConfig,
+        my_cert: Cert,
+        my_id: Option<u8>,
+        allow_list: Arc<Mutex<AllowList>>,
+        rt: Arc<Mutex<Runtime>>,
+    ) -> Result<Self, crate::rpc::errors::BrokerError> {
+        let client = SyncClient::new_with_runtime(config, my_cert.clone(), allow_list, rt)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
             id: my_id.unwrap_or(0), // Default to 0 if not provided
