@@ -4,7 +4,7 @@ pub const SERVER_ID: u8 = 0; // Default ID for the server
 
 // Rate limiting settings
 pub const RATE_LIMIT_CAPACITY: usize = 10000; // Max 10000 requests
-pub const RATE_LIMIT_REFILL_RATE: f64 = 10.0; // 10 tokens per second
+pub const RATE_LIMIT_REFILL_RATE: f64 = 100.0; // 100 tokens per second
 pub const TOKENS_PER_MESSAGE: usize = 2; // 1 for ping + 1 for message. Every time a client wants to send,
                                          //it also needs to do a ping, so 2 tokens are consumed per request
 
@@ -15,10 +15,10 @@ pub const RETRY_MIN_DELAY_MSECS: u64 = 100; // Minimum delay before retrying a m
 pub const RETRY_MAX_DELAY_MSECS: u64 = 10000; // Maximum delay before retrying a message send 10s
 
 // Msg size settings
-pub const MAX_FRAME_SIZE_KB: usize = 1024; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
-                                           // encoded frame, not just the message payload
-                                           // As a result, the maximum allowed `msg` payload
-                                           // must be strictly smaller than this limit.
+pub const MAX_FRAME_SIZE_KB: usize = 1024 * 4; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
+                                               // encoded frame, not just the message payload
+                                               // As a result, the maximum allowed `msg` payload
+                                               // must be strictly smaller than this limit.
 pub const MAX_MSG_SIZE_KB: usize = MAX_FRAME_SIZE_KB - 4; // Leave some room for encoding overhead
 
 // Identification settings
