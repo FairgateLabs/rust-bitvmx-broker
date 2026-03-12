@@ -309,16 +309,16 @@ impl QueueChannel {
                     );
                 }
 
-                if self
-                    .internal_send(&address, pubk_hash, &msg.payload)
-                    .is_ok_and(|x| x)
-                {
+                let attempt_to_send = self.internal_send(&address, pubk_hash, &msg.payload);
+                if attempt_to_send.as_ref().is_ok_and(|x| *x) {
                     self.storage.remove(&key, None)?;
                     *sent += 1;
                 } else {
                     warn!(
-                        "Failed to send queued message to {} at {}",
-                        pubk_hash, address_str
+                        "Failed to send queued message to {} at {}: {}",
+                        pubk_hash,
+                        address_str,
+                        attempt_to_send.as_ref().err().unwrap()
                     );
 
                     msg.retry.record_attempt(&self.retry_policy, now);
