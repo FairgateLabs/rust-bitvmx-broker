@@ -1,5 +1,4 @@
 use std::{
-    net::{IpAddr, Ipv4Addr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -63,11 +62,11 @@ fn wait_ctrl() {
 fn main() {
     init_tracing().unwrap();
     let flags = Flags::parse();
-    let privk = settings::decrypt_or_read_file("certs/services.key")
+    let privk = settings::decrypt_or_read_file("../rust-bitvmx-client/config/keys/services.key")
         .expect("Failed to read private key file");
     let cert = Cert::new_with_privk(privk.as_str()).unwrap();
-    let allow_list =
-        AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
+    let allow_list = AllowList::new();
+    allow_list.lock().unwrap().allow_all();
     let routing = RoutingTable::new();
     routing.lock().unwrap().allow_all();
     let config = BrokerConfig::new(flags.port, None, cert.get_pubk_hash().unwrap());
