@@ -34,14 +34,14 @@ impl StorageApi for BrokerStorage {
             .lock()
             .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
         let mut keys = storage_lock
-            .partial_compare_keys(&format!("broker_msg_{dest}_"))
+            .partial_compare_keys(&format!("broker_msg_{dest}_"), None)
             .unwrap_or(vec![]);
         if keys.is_empty() {
             return Ok(None);
         }
         keys.sort();
         let key = keys.first().unwrap();
-        if let Some(msg) = storage_lock.get(key).unwrap_or(None) {
+        if let Some(msg) = storage_lock.get(key, None).unwrap_or(None) {
             let parts: Vec<&str> = key.split('_').collect();
             let uid = parts[3]
                 .parse::<u64>()
@@ -61,11 +61,11 @@ impl StorageApi for BrokerStorage {
             .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
         let mut messages = Vec::new();
         let mut keys = storage_lock
-            .partial_compare_keys(&format!("broker_msg_{dest}_"))
+            .partial_compare_keys(&format!("broker_msg_{dest}_"), None)
             .unwrap_or(vec![]);
         keys.sort();
         for key in keys {
-            if let Some(msg) = storage_lock.get(&key).unwrap_or(None) {
+            if let Some(msg) = storage_lock.get(&key, None).unwrap_or(None) {
                 let parts: Vec<&str> = key.split('_').collect();
                 let uid = parts[3]
                     .parse::<u64>()
@@ -85,7 +85,7 @@ impl StorageApi for BrokerStorage {
             .lock()
             .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
         let keys = storage_lock
-            .partial_compare_keys(&format!("broker_msg_{dest}_{}", format_uid(uid)))
+            .partial_compare_keys(&format!("broker_msg_{dest}_{}", format_uid(uid)), None)
             .unwrap_or(vec![]);
         if keys.len() != 1 {
             return Ok(false);
@@ -109,7 +109,7 @@ impl StorageApi for BrokerStorage {
             .map_err(|_| BrokerRpcError::MutexError("storage".to_string()))?;
 
         let uid: u64 = storage_lock
-            .get("broker_current_uid")
+            .get("broker_current_uid", None)
             .unwrap_or(None)
             .unwrap_or(0)
             + 1;

@@ -211,7 +211,7 @@ impl QueueChannel {
 
     fn get_next_idx(&self, queue: &QueueType) -> Result<u64, BrokerError> {
         let key = self.storage_idx_key(queue);
-        let current_idx: u64 = self.storage.get(&key).unwrap_or(None).unwrap_or(0) + 1;
+        let current_idx: u64 = self.storage.get(&key, None).unwrap_or(None).unwrap_or(0) + 1;
         self.storage.set(&key, current_idx, None)?;
         Ok(current_idx)
     }
@@ -264,7 +264,7 @@ impl QueueChannel {
     fn process_out_queue(&self) -> Result<(), BrokerError> {
         let mut storage_keys = self
             .storage
-            .partial_compare_keys(&self.partial_compare_keys(&QueueType::OutQueue))?
+            .partial_compare_keys(&self.partial_compare_keys(&QueueType::OutQueue), None)?
             .into_iter()
             .collect::<Vec<String>>();
         storage_keys.sort_by_key(|key| {
@@ -280,7 +280,7 @@ impl QueueChannel {
         let now = now_ms()?;
 
         for key in storage_keys {
-            if let Some(raw) = self.storage.get::<_, String>(&key)? {
+            if let Some(raw) = self.storage.get::<_, String>(&key, None)? {
                 let parts: Vec<&str> = key.split('/').collect();
                 if parts.len() < 7 {
                     continue;
@@ -404,7 +404,7 @@ impl QueueChannel {
     ) -> Result<Vec<(ReceiveHandlerChannel, Option<String>)>, BrokerError> {
         let mut storage_keys = self
             .storage
-            .partial_compare_keys(&self.partial_compare_keys(queue_type))?
+            .partial_compare_keys(&self.partial_compare_keys(queue_type), None)?
             .into_iter()
             .collect::<Vec<String>>();
         storage_keys.sort_by_key(|key| {
@@ -417,7 +417,7 @@ impl QueueChannel {
         let mut messages = vec![];
 
         for key in storage_keys {
-            if let Some(data) = self.storage.get(&key)? {
+            if let Some(data) = self.storage.get(&key, None)? {
                 let x: String = data;
                 let parts: Vec<&str> = key.split('/').collect();
                 if parts.len() < 7 {
