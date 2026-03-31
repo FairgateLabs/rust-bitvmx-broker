@@ -2,12 +2,12 @@ use super::{BrokerConfig, Message, StorageApi};
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
+        config::MsgSizeConfig,
         errors::{BrokerRpcError, MutexExt},
         rate_limiter::RateLimiterManager,
         tls_helper::{AllowListClientVerifier, Cert},
         Broker,
     },
-    settings::{MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB},
 };
 use futures::StreamExt;
 use rustls::{RootCertStore, ServerConfig};
@@ -36,6 +36,7 @@ pub struct BrokerServer<S: StorageApi> {
     storage: Arc<Mutex<S>>,
     routing: Arc<Mutex<RoutingTable>>,
     rate_limiter: Arc<RateLimiterManager>,
+    msg_size_config: MsgSizeConfig,
 }
 
 impl<S> BrokerServer<S>
@@ -47,12 +48,14 @@ where
         storage: Arc<Mutex<S>>,
         routing: Arc<Mutex<RoutingTable>>,
         rate_limiter: Arc<RateLimiterManager>,
+        msg_size_config: MsgSizeConfig,
     ) -> Self {
         Self {
             client_pubkey_hash,
             storage,
             routing,
             rate_limiter,
+            msg_size_config,
         }
     }
 }
@@ -91,9 +94,13 @@ where
             warn!("Routing denied: {} cannot send to {}", from, dest);
             return Ok(false);
         }
-        if msg.len() > MAX_MSG_SIZE_KB * 1024 {
+        if msg.len() > (self.msg_size_config.max_frame_size_kb - 4) * 1024 {
+            // 4 for encoding overhead
             warn!("Message too large: {} bytes", msg.len());
-            return Err(BrokerRpcError::MessageTooLarge(msg.len() / 1024));
+            return Err(BrokerRpcError::MessageTooLarge(
+                self.msg_size_config.max_frame_size_kb - 4,
+                msg.len() / 1024,
+            ));
         }
         self.storage
             .lock_or_err("storage")?
@@ -204,12 +211,15 @@ where
         .with_single_cert(certs, key)?;
     let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-    let rate_limiter = Arc::new(RateLimiterManager::new());
+    let rate_limiter = Arc::new(RateLimiterManager::new(
+        config.get_settings().rate_limiter_config,
+    ));
     let cancellation_token = CancellationToken::new();
     let mut connection_tasks: Vec<JoinHandle<()>> = Vec::new();
     info!("Server started, waiting for TLS connections...");
 
     server_started.send(()).await.ok();
+    let settings = config.get_settings().clone();
 
     tokio::select! {
         _ = async {
@@ -229,6 +239,7 @@ where
                 let routing = routing.clone();
                 let cancel_token = cancellation_token.clone();
                 let rate_limiter = rate_limiter.clone();
+                let settings = settings.clone();
 
                 // Spawn a new task for each connection
                 let task = tokio::spawn(async move {
@@ -293,12 +304,12 @@ where
 
                             // Client is authorized
                             let codec = LengthDelimitedCodec::builder()
-                                .max_frame_length(MAX_FRAME_SIZE_KB * 1024)
+                                .max_frame_length(settings.msg_size_config.max_frame_size_kb * 1024)
                                 .new_codec();
                             let framed = Framed::new(tls_stream, codec); // Length prefix, message boundaries
                             let transport = serde_transport::new(framed, Json::default());
                             server::BaseChannel::with_defaults(transport)
-                                .execute(BrokerServer::new(hex_fingerprint, storage, routing, rate_limiter).serve())
+                                .execute(BrokerServer::new(hex_fingerprint, storage, routing, rate_limiter, settings.msg_size_config).serve())
                                 .for_each(spawn)
                                 .await;
 
