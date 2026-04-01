@@ -13,10 +13,10 @@ pub const MAX_MSGS_PER_TICK_UTILIZATION: f64 = 0.5; // 50% of capacity
 pub const MAX_SEND_ATTEMPTS: u8 = 5; // Max attempts to send a message before moving to dead letter queue
 
 // Msg size settings
-pub const MAX_FRAME_SIZE_KB: usize = 1024; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
-                                           // encoded frame, not just the message payload
-                                           // As a result, the maximum allowed `msg` payload
-                                           // must be strictly smaller than this limit.
+pub const MAX_FRAME_SIZE_KB: usize = 1024 * 8; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
+                                               // encoded frame, not just the message payload
+                                               // As a result, the maximum allowed `msg` payload
+                                               // must be strictly smaller than this limit.
 pub const MAX_MSG_SIZE_KB: usize = MAX_FRAME_SIZE_KB - 4; // Leave some room for encoding overhead
 
 // Identification settings
