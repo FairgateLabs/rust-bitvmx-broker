@@ -1,7 +1,4 @@
-use crate::{
-    rpc::errors::BrokerRpcError,
-    settings::{RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
-};
+use crate::rpc::{config::RateLimiterConfig, errors::BrokerRpcError};
 use std::{collections::HashMap, sync::Mutex, time::Instant};
 
 #[derive(Clone)]
@@ -50,11 +47,11 @@ pub struct RateLimiterManager {
 }
 
 impl RateLimiterManager {
-    pub fn new() -> Self {
+    pub fn new(rate_limiter_config: RateLimiterConfig) -> Self {
         RateLimiterManager {
             pubk_hash_limiters: Mutex::new(HashMap::new()),
-            rate_limit_capacity: RATE_LIMIT_CAPACITY,
-            rate_limit_refill_rate: RATE_LIMIT_REFILL_RATE,
+            rate_limit_capacity: rate_limiter_config.rate_limit_capacity,
+            rate_limit_refill_rate: rate_limiter_config.rate_limit_refill_rate,
         }
     }
 

@@ -12,7 +12,7 @@ use bitvmx_broker::{
         tls_helper::Cert,
         BrokerConfig,
     },
-    settings::{MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB, RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
+    settings::{MAX_FRAME_SIZE_KB, RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
 };
 use std::{
     fs::{self},
@@ -45,6 +45,7 @@ fn prepare_server(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert.get_pubk_hash().unwrap(),
+        None,
     );
     let server = BrokerSync::new(
         &server_config,
@@ -82,6 +83,7 @@ fn prepare_server(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_cert.get_pubk_hash().unwrap(),
+        None,
     );
     let server = BrokerSync::new(
         &server_config,
@@ -128,6 +130,7 @@ fn prepare_client_with_id(
         server_port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubk_hash.to_string(),
+        None,
     );
     let user = DualChannel::new(&server_config, client_cert, id, allow_list).unwrap();
     user
@@ -279,6 +282,7 @@ fn test_ack() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
+        None,
     );
     let myclient1 = SyncClient::new(
         &client_config1,
@@ -291,6 +295,7 @@ fn test_ack() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client2.get_pkh(),
+        None,
     );
     let myclient2 = SyncClient::new(
         &client_config2,
@@ -344,6 +349,7 @@ fn test_reconnect() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
+        None,
     );
     let myclient1 = SyncClient::new(
         &client_config1,
@@ -356,6 +362,7 @@ fn test_reconnect() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client2.get_pkh(),
+        None,
     );
     let myclient2 = SyncClient::new(
         &client_config2,
@@ -767,11 +774,13 @@ fn test_ca() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client1.get_pkh(),
+        None,
     );
     let client_config2 = BrokerConfig::new(
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         client2.get_pkh(),
+        None,
     );
     let myclient1 = SyncClient::new(&client_config1, client_cert1, allow_list.clone()).unwrap();
     let myclient2 = SyncClient::new(&client_config2, client_cert2, allow_list.clone()).unwrap();
@@ -783,6 +792,7 @@ fn test_ca() {
         port,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server.get_pkh().to_string(),
+        None,
     );
     let mut broker_server = BrokerSync::new(
         &server_config,
@@ -807,6 +817,7 @@ fn test_ca() {
 
 #[test]
 fn test_send_message_too_large_client_side() {
+    const MAX_MSG_SIZE_KB: usize = MAX_FRAME_SIZE_KB - 4;
     let port = 10060;
     cleanup_storage(port, 3);
 
@@ -829,12 +840,12 @@ fn test_send_message_too_large_client_side() {
 
     assert!(matches!(
         user1.send(&client2.get_identifier(), big_msg),
-        Err(BrokerError::MessageTooLarge(_))
+        Err(BrokerError::MessageTooLarge(_, _))
     ));
     assert!(user1.send(&client2.get_identifier(), limit_msg).is_ok());
     assert!(matches!(
         user1.send(&client2.get_identifier(), over_frame_limit_msg),
-        Err(BrokerError::MessageTooLarge(_))
+        Err(BrokerError::MessageTooLarge(_, _))
     ));
     broker_server.close();
     cleanup_storage(port, 3);
@@ -924,6 +935,7 @@ fn test_readme_example() {
         10000,
         Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
         server_pubkey_hash,
+        None,
     );
     let _server = BrokerSync::new(
         &config,

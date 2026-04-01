@@ -26,13 +26,10 @@ use crate::{
         routing::RoutingTable,
     },
     rpc::{
-        errors::BrokerError, sync_client::SyncClient, sync_server::BrokerSync, tls_helper::Cert,
-        BrokerConfig,
+        config::BrokerSettings, errors::BrokerError, sync_client::SyncClient,
+        sync_server::BrokerSync, tls_helper::Cert, BrokerConfig,
     },
-    settings::{
-        COMMS_ID, MAX_MSGS_PER_TICK_UTILIZATION, MAX_SEND_ATTEMPTS, RATE_LIMIT_CAPACITY,
-        RETRY_MAX_DELAY_MSECS, RETRY_MIN_DELAY_MSECS, TOKENS_PER_MESSAGE,
-    },
+    settings::COMMS_ID,
 };
 
 #[derive(Debug)]
@@ -59,6 +56,7 @@ pub struct QueueChannel {
     routing_table: Arc<Mutex<RoutingTable>>,
     retry_policy: RetryPolicy,
     rt: Arc<Mutex<Runtime>>,
+    broker_settings: BrokerSettings,
 }
 
 enum QueueType {
@@ -86,6 +84,7 @@ impl QueueChannel {
         storage_path: Option<String>,
         allow_list: Arc<Mutex<AllowList>>,
         routing_table: Arc<Mutex<RoutingTable>>,
+        broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
         // Initialize path for receiving message storage
         let storage_path = match storage_path {
@@ -99,8 +98,12 @@ impl QueueChannel {
 
         let cert = Cert::new_with_privk(privk)?;
         let pubk_hash = cert.get_pubk_hash()?;
-        let broker_config =
-            BrokerConfig::new(address.port(), Some(address.ip()), pubk_hash.clone());
+        let broker_config = BrokerConfig::new(
+            address.port(),
+            Some(address.ip()),
+            pubk_hash.clone(),
+            Some(broker_settings.clone()),
+        );
 
         let server = BrokerSync::new(
             &broker_config,
@@ -118,11 +121,7 @@ impl QueueChannel {
             broker_storage.clone(),
         );
 
-        let retry_policy = RetryPolicy::new(
-            RETRY_MIN_DELAY_MSECS,
-            RETRY_MAX_DELAY_MSECS,
-            MAX_SEND_ATTEMPTS,
-        )?;
+        let retry_policy = RetryPolicy::new(&broker_settings.queue_channel_config)?;
 
         let rt = Arc::new(Mutex::new(Runtime::new()?));
 
@@ -137,6 +136,7 @@ impl QueueChannel {
             routing_table,
             retry_policy,
             rt,
+            broker_settings,
         })
     }
 
@@ -148,6 +148,7 @@ impl QueueChannel {
         storage_path: Option<String>,
         allow_list: &str,
         routing_table: &str,
+        broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
         let allow_list = AllowList::from_file(allow_list)?;
         let routing_table = RoutingTable::from_file(routing_table)?;
@@ -160,6 +161,7 @@ impl QueueChannel {
             storage_path,
             allow_list,
             routing_table,
+            broker_settings,
         )
     }
 
@@ -276,7 +278,11 @@ impl QueueChannel {
 
         // send up to 50% of max capacity messages per tick
         let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
-        let max_per_dest = self.max_msgs_per_tick(MAX_MSGS_PER_TICK_UTILIZATION); // use 50% of capacity
+        let max_per_dest = self.max_msgs_per_tick(
+            self.broker_settings
+                .queue_channel_config
+                .max_msgs_per_tick_utilization,
+        ); // use 50% of capacity
         let now = now_ms()?;
 
         for key in storage_keys {
@@ -355,6 +361,7 @@ impl QueueChannel {
             address.port(),
             Some(address.ip()),
             dest_pubk_hash.to_string(),
+            Some(self.broker_settings.clone()),
         );
 
         let sync_client = SyncClient::new_with_runtime(
@@ -510,7 +517,8 @@ impl QueueChannel {
     fn max_msgs_per_tick(&self, utilization: f64) -> usize {
         assert!((0.0..=1.0).contains(&utilization));
 
-        let max_msgs = RATE_LIMIT_CAPACITY / TOKENS_PER_MESSAGE;
+        let max_msgs = self.broker_settings.rate_limiter_config.rate_limit_capacity
+            / self.broker_settings.rate_limiter_config.tokens_per_message;
         ((max_msgs as f64) * utilization).floor() as usize
     }
 }
@@ -529,12 +537,17 @@ mod tests {
 
     const CTX: &str = "test_context";
 
-    fn get_allow_routing() -> (Arc<Mutex<AllowList>>, Arc<Mutex<RoutingTable>>) {
+    fn get_allow_routing_settings() -> (
+        Arc<Mutex<AllowList>>,
+        Arc<Mutex<RoutingTable>>,
+        BrokerSettings,
+    ) {
         let allow_list = AllowList::new();
         allow_list.lock().unwrap().allow_all();
         let routing_table = RoutingTable::new();
         routing_table.lock().unwrap().allow_all();
-        (allow_list, routing_table)
+        let settings = BrokerSettings::new("config/broker_settings.yaml").unwrap();
+        (allow_list, routing_table, settings)
     }
 
     fn get_storage(port: u16) -> Rc<Storage> {
@@ -579,7 +592,7 @@ mod tests {
     }
 
     fn get_queue_channels(port: u16) -> (QueueChannel, QueueChannel, QueueChannel) {
-        let (allow_list, routing_table) = get_allow_routing();
+        let (allow_list, routing_table, settings) = get_allow_routing_settings();
         let (peer1, peer2, peer3) = get_peers_info(port);
 
         let queue_channel1 = QueueChannel::new(
@@ -590,6 +603,7 @@ mod tests {
             None,
             allow_list.clone(),
             routing_table.clone(),
+            settings.clone(),
         )
         .unwrap();
 
@@ -601,6 +615,7 @@ mod tests {
             None,
             allow_list.clone(),
             routing_table.clone(),
+            settings.clone(),
         )
         .unwrap();
 
@@ -612,6 +627,7 @@ mod tests {
             None,
             allow_list.clone(),
             routing_table.clone(),
+            settings,
         )
         .unwrap();
 
@@ -620,7 +636,7 @@ mod tests {
 
     // Get single queue channel for tests (peer1, peer2, or peer3)
     fn get_queue_channel(port: u16, peer: u8) -> QueueChannel {
-        let (allow_list, routing_table) = get_allow_routing();
+        let (allow_list, routing_table, settings) = get_allow_routing_settings();
         let selected_peer = get_peer_info(port, peer);
         let queue_channel = QueueChannel::new(
             "testqueue",
@@ -630,6 +646,7 @@ mod tests {
             None,
             allow_list.clone(),
             routing_table.clone(),
+            settings,
         )
         .unwrap();
 
@@ -860,8 +877,11 @@ mod tests {
         let port = 12012;
         cleanup_storage(port, 3);
 
+        let (_, _, settings) = get_allow_routing_settings();
+
         let (mut sender, mut receiver1, mut receiver2) = get_queue_channels(port);
-        let max_per_dest = sender.max_msgs_per_tick(MAX_MSGS_PER_TICK_UTILIZATION);
+        let max_per_dest =
+            sender.max_msgs_per_tick(settings.queue_channel_config.max_msgs_per_tick_utilization);
 
         // Send more than allowed per tick
         let excess_msgs = 3;
@@ -948,6 +968,7 @@ mod tests {
         let port = 12015;
         cleanup_storage(port, 3);
 
+        let (_, _, settings) = get_allow_routing_settings();
         let (mut sender, mut receiver, mut queue_channel3) = get_queue_channels(port);
 
         // Close receiver server to simulate disconnection
@@ -964,8 +985,10 @@ mod tests {
 
         // Keep ticking until message appears in dead letter queue or timeout
         let start = std::time::Instant::now();
-        let timeout =
-            std::time::Duration::from_millis(RETRY_MAX_DELAY_MSECS * MAX_SEND_ATTEMPTS as u64);
+        let timeout = std::time::Duration::from_millis(
+            settings.queue_channel_config.retry_max_delay_msecs
+                * settings.queue_channel_config.max_send_attempts as u64,
+        );
 
         loop {
             sender.tick().unwrap();

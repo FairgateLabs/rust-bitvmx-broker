@@ -1,6 +1,7 @@
 use crate::{
     identification::identifier::Identifier,
     rpc::{
+        config::BrokerSettings,
         errors::{BrokerError, BrokerRpcError},
         tls_helper::{init_tls, Cert},
     },
@@ -9,6 +10,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub mod client;
+pub mod config;
 pub mod errors;
 pub mod rate_limiter;
 pub mod server;
@@ -37,10 +39,16 @@ pub struct BrokerConfig {
     ip: IpAddr,
     listen_ip: IpAddr,
     pubk_hash: String,
+    broker_settings: BrokerSettings,
 }
 
 impl BrokerConfig {
-    pub fn new(port: u16, ip: Option<IpAddr>, pubk_hash: String) -> Self {
+    pub fn new(
+        port: u16,
+        ip: Option<IpAddr>,
+        pubk_hash: String,
+        broker_settings: Option<BrokerSettings>,
+    ) -> Self {
         init_tls(); // Ensure the CryptoProvider is initialized
                     //TODO: remove
         Self {
@@ -48,6 +56,7 @@ impl BrokerConfig {
             ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
             pubk_hash,
+            broker_settings: broker_settings.unwrap_or_default(),
         }
     }
 
@@ -69,6 +78,7 @@ impl BrokerConfig {
                 ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
                 listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
                 pubk_hash,
+                broker_settings: BrokerSettings::default(),
             },
             identifier,
             cert,
@@ -93,6 +103,10 @@ impl BrokerConfig {
 
     pub fn get_ip(&self) -> IpAddr {
         self.ip
+    }
+
+    pub fn get_settings(&self) -> BrokerSettings {
+        self.broker_settings.clone()
     }
 }
 

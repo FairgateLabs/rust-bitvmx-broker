@@ -19,7 +19,7 @@ use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 use bitvmx_broker::{
     identification::{allow_list::AllowList, routing::RoutingTable},
-    rpc::{sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
+    rpc::{config::BrokerSettings, sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
 use tracing::info;
@@ -69,7 +69,13 @@ fn main() {
     allow_list.lock().unwrap().allow_all();
     let routing = RoutingTable::new();
     routing.lock().unwrap().allow_all();
-    let config = BrokerConfig::new(flags.port, None, cert.get_pubk_hash().unwrap());
+    let config = BrokerSettings::new("config/broker_settings.yaml").unwrap();
+    let config = BrokerConfig::new(
+        flags.port,
+        None,
+        cert.get_pubk_hash().unwrap(),
+        Some(config),
+    );
 
     #[cfg(not(feature = "storagebackend"))]
     let storage = Arc::new(Mutex::new(
