@@ -19,7 +19,6 @@ pub const MAX_FRAME_SIZE_KB: usize = 1024 * 8; // NOTE: `MAX_FRAME_SIZE_KB` appl
                                                // encoded frame, not just the message payload
                                                // As a result, the maximum allowed `msg` payload
                                                // must be strictly smaller than this limit.
-pub const MAX_MSG_SIZE_KB: usize = MAX_FRAME_SIZE_KB - 4; // Leave some room for encoding overhead
 
 // Identification settings
 pub const MAX_PUBKEY_HASH_LEN: usize = 128;

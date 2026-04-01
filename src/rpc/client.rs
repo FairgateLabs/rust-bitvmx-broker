@@ -2,11 +2,11 @@ use super::errors::BrokerError;
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
+        config::MsgSizeConfig,
         errors::MutexExt,
         tls_helper::{AllowListServerVerifier, Cert},
         BrokerClient, BrokerConfig, Message,
     },
-    settings::{MAX_FRAME_SIZE_KB, MAX_MSG_SIZE_KB},
 };
 use rustls::{pki_types::ServerName, RootCertStore};
 use std::{
@@ -26,6 +26,7 @@ pub struct Client {
     client: Arc<Mutex<Option<BrokerClient>>>,
     cert: Cert,
     allow_list: Arc<ArcMutex<AllowList>>,
+    msg_config: MsgSizeConfig,
 }
 
 impl Clone for Client {
@@ -43,13 +44,13 @@ impl Client {
             client: Arc::new(Mutex::new(None)),
             cert,
             allow_list,
+            msg_config: config.get_settings().msg_size_config,
         }
     }
 
     async fn connect(&self) -> Result<(), BrokerError> {
         let stream = TcpStream::connect(self.address).await?;
         stream.set_nodelay(true)?;
-
         // Load certs and private key
         let cert = self.cert.get_cert()?;
         let key = self.cert.get_private_key()?;
@@ -100,7 +101,7 @@ impl Client {
 
         // Server is authorized
         let codec = LengthDelimitedCodec::builder()
-            .max_frame_length(MAX_FRAME_SIZE_KB * 1024)
+            .max_frame_length(self.msg_config.max_frame_size_kb * 1024)
             .new_codec();
         let framed = Framed::new(tls_stream, codec);
         let transport = serde_transport::new(framed, Json::default());
@@ -140,8 +141,12 @@ impl Client {
     ) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
 
-        if msg.len() > MAX_MSG_SIZE_KB * 1024 {
-            return Err(BrokerError::MessageTooLarge(msg.len() / 1024));
+        if msg.len() > (self.msg_config.max_frame_size_kb - 4) * 1024 {
+            // 4 for encoding overhead
+            return Err(BrokerError::MessageTooLarge(
+                self.msg_config.max_frame_size_kb - 4,
+                msg.len() / 1024,
+            ));
         }
 
         Ok(client
@@ -153,8 +158,12 @@ impl Client {
         let client = self.get_or_connect().await?;
         let msg = client.get(context::current(), dest).await??;
         if let Some(ref m) = msg {
-            if m.msg.len() > MAX_MSG_SIZE_KB * 1024 {
-                return Err(BrokerError::MessageTooLarge(m.msg.len() / 1024));
+            if m.msg.len() > (self.msg_config.max_frame_size_kb - 4) * 1024 {
+                // 4 for encoding overhead
+                return Err(BrokerError::MessageTooLarge(
+                    self.msg_config.max_frame_size_kb - 4,
+                    m.msg.len() / 1024,
+                ));
             }
         }
         Ok(msg)
@@ -171,6 +180,7 @@ impl Client {
             client: Arc::clone(&self.client),
             cert: self.cert.clone(),
             allow_list: self.allow_list.clone(),
+            msg_config: self.msg_config.clone(),
         })
     }
 }

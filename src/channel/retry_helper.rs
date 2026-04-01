@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::info;
 
+use crate::rpc::config::QueueChannelConfig;
+
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
     pub step_ms: u64,
@@ -12,11 +14,10 @@ pub struct RetryPolicy {
 }
 
 impl RetryPolicy {
-    pub fn new(
-        min_delay_ms: u64,
-        max_delay_ms: u64,
-        max_attempts: u8,
-    ) -> Result<Self, RetryPolicyError> {
+    pub fn new(config: &QueueChannelConfig) -> Result<Self, RetryPolicyError> {
+        let min_delay_ms = config.retry_min_delay_msecs;
+        let max_delay_ms = config.retry_max_delay_msecs;
+        let max_attempts = config.max_send_attempts;
         if min_delay_ms > max_delay_ms {
             return Err(RetryPolicyError::MinGreaterThanMax {
                 min: min_delay_ms,
@@ -46,10 +47,6 @@ impl RetryPolicy {
             max_delay_ms,
             max_attempts,
         })
-    }
-
-    pub fn default() -> Self {
-        Self::new(100, 10_000, 10).unwrap()
     }
 
     pub fn get_next_delay(&self, attempts: u8) -> u64 {

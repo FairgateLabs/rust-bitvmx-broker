@@ -1,4 +1,3 @@
-use crate::settings::MAX_MSG_SIZE_KB;
 use crate::{channel::retry_helper::RetryPolicyError, identification};
 use bitvmx_settings::errors::ConfigError;
 use serde::{Deserialize, Serialize};
@@ -71,8 +70,8 @@ pub enum BrokerError {
     #[error("Invalid private key for PEM {0}")]
     InvalidPrivateKey(#[from] rsa::pkcs8::Error),
 
-    #[error("Message too large. Max size is {MAX_MSG_SIZE_KB} KB, but got {0} KB")]
-    MessageTooLarge(usize),
+    #[error("Message too large. Max size is {0} KB, but got {1} KB")]
+    MessageTooLarge(usize, usize),
 
     #[error("Expected ctx {}, but got {}", expected, got)]
     InvalidMessageContext { expected: String, got: String },
@@ -104,8 +103,8 @@ pub enum BrokerRpcError {
     #[error("Parse error: {0}")]
     ParseError(String),
 
-    #[error("Message too large. Max size is {MAX_MSG_SIZE_KB} KB, but got {0} KB")]
-    MessageTooLarge(usize),
+    #[error("Message too large. Max size is {0} KB, but got {1} KB")]
+    MessageTooLarge(usize, usize),
 
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
