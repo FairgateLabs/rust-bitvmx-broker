@@ -8,6 +8,7 @@ use crate::{
 };
 use std::sync::{Arc, Mutex};
 use tokio::{runtime::Runtime, sync::mpsc};
+use tracing::warn;
 
 pub struct BrokerSync {
     rt: Runtime,
@@ -43,8 +44,20 @@ impl BrokerSync {
 
         // Wait for server to start
         rt.block_on(async {
-            server_started_rx.recv().await;
-        });
+            match server_started_rx.recv().await {
+                Some(()) => Ok(()),
+                None => {
+                    warn!(
+                        "Broker server failed to start (sender dropped) with config: {:?}",
+                        config
+                    );
+                    Err(BrokerError::ServerStartError(format!(
+                        "Server failed to start with config: {:?}",
+                        config
+                    )))
+                }
+            }
+        })?;
 
         Ok(Self { rt, shutdown_tx })
     }

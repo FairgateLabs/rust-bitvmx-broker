@@ -85,6 +85,9 @@ pub enum BrokerError {
     #[error("Other error: {0}")]
     Other(String),
 
+    #[error("Failed to start server: {0}")]
+    ServerStartError(String),
+
     #[error("Setting file error: {0}")]
     Settings(#[from] ConfigError),
 }

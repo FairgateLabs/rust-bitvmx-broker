@@ -124,11 +124,18 @@ impl Client {
         }
 
         // Try reconnecting
-        if self.connect().await.is_ok() {
+        let result = self.connect().await;
+        if result.as_ref().is_ok() {
             let locked = self.client.lock().await;
             if let Some(client) = locked.as_ref().cloned() {
                 return Ok(client);
             }
+        } else {
+            info!(
+                "Failed to connect to broker: {}",
+                result.as_ref().err().unwrap()
+            );
+            return Err(result.err().unwrap());
         }
         Err(BrokerError::Disconnected)
     }
