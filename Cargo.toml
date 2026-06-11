@@ -1,6 +1,6 @@
 [package]
 name = "bitvmx-broker"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2021"
 description = "BitVMX Broker"
 keywords = ["BitVMX", "Broker"]
@@ -17,8 +17,8 @@ tokio-serde = "0.9.0"
 tracing = { version = "0.1.26" }
 serde = { version = "1.0.219", features = ["derive"] }
 thiserror = "2.0.11"
-rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", optional = true, tag = "v0.7.3" }
-bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.7.3" }
+rust-bitvmx-storage-backend = { git = "https://github.com/FairgateLabs/rust-bitvmx-storage-backend.git", optional = true, tag = "v0.7.4" }
+bitvmx-settings = { git = "https://github.com/FairgateLabs/rust-bitvmx-settings.git", tag = "v0.7.4" }
 tokio-rustls = "0.26.2"
 tokio-util = "0.7.14"
 rustls = "0.23.29"
