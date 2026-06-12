@@ -32,6 +32,8 @@ rsa = "0.9.8"
 sha2 = "0.10"
 pem = "3.0.4"
 serde_json = "1.0.64"
+#adding time to fix issue with current version of rcgen. try again in some time
+time = "=0.3.46"
 
 [dev-dependencies]
 ctrlc = "3.1.0"
