@@ -56,9 +56,21 @@ impl AllowList {
         })))
     }
 
-    pub fn allow_all(&mut self) {
-        self.allow_all = true;
+    pub fn set_allow_all(&mut self, allow_all: bool) {
+        self.allow_all = allow_all;
     }
+
+    pub fn is_allow_all(&self) -> bool {
+        self.allow_all
+    }
+
+    pub fn entries(&self) -> Vec<(PubkHash, Option<IpAddr>)> {
+        self.allow_list
+            .iter()
+            .map(|(hash, addr)| (hash.clone(), *addr))
+            .collect()
+    }
+
     pub fn is_allowed(&self, pubk_hash: &PubkHash, addr: IpAddr) -> bool {
         if self.allow_all {
             return true;
@@ -80,12 +92,8 @@ impl AllowList {
             .any(|pubkey_hash| pubkey_hash == pubk_hash)
     }
 
-    pub fn add(&mut self, pubk_hash: PubkHash, addr: IpAddr) {
-        self.allow_list.insert(pubk_hash, Some(addr));
-    }
-
-    pub fn add_wildcard(&mut self, pubk_hash: PubkHash) {
-        self.allow_list.insert(pubk_hash, None);
+    pub fn add_entry(&mut self, pubk_hash: PubkHash, addr: Option<IpAddr>) {
+        self.allow_list.insert(pubk_hash, addr);
     }
 
     pub fn remove(&mut self, pubk_hash: &PubkHash) {
@@ -132,8 +140,8 @@ mod tests {
         let local_addr = addr_from_str("127.0.0.1").unwrap();
         let allow_list = AllowList::new();
         let mut allow_list = allow_list.lock().unwrap();
-        allow_list.add("hash1".to_string(), local_addr);
-        allow_list.add_wildcard("hash2".to_string());
+        allow_list.add_entry("hash1".to_string(), Some(local_addr));
+        allow_list.add_entry("hash2".to_string(), None);
         assert!(allow_list.is_allowed(&"hash1".to_string(), local_addr));
         assert!(allow_list.is_allowed(&"hash2".to_string(), local_addr));
         assert!(!allow_list.is_allowed(&"hash1".to_string(), addr_from_str("127.0.0.2").unwrap()));
@@ -149,7 +157,7 @@ mod tests {
     fn test_allow_all_flag() {
         let allow_list = AllowList::new();
         let mut allow_list = allow_list.lock().unwrap();
-        allow_list.allow_all();
+        allow_list.set_allow_all(true);
         assert!(allow_list.allow_all);
         assert!(allow_list.is_allowed(&"anything".to_string(), addr_from_str("127.0.0.1").unwrap()));
     }
@@ -172,7 +180,7 @@ mod tests {
         let allow_list = AllowList::new();
         {
             let mut allow_list = allow_list.lock().unwrap();
-            allow_list.add("hashY".to_string(), addr_from_str("127.0.0.1").unwrap());
+            allow_list.add_entry("hashY".to_string(), addr_from_str("127.0.0.1"));
             allow_list
                 .generate_yaml(file_path.to_str().unwrap())
                 .unwrap();
@@ -181,6 +189,67 @@ mod tests {
         let allow_list2 = AllowList::from_file(file_path.to_str().unwrap()).unwrap();
         let allow_list2 = allow_list2.lock().unwrap();
         assert!(allow_list2.is_allowed(&"hashY".to_string(), addr_from_str("127.0.0.1").unwrap()));
+        assert!(
+            !allow_list2.is_allowed(&"hashY".to_string(), addr_from_str("127.0.0.2").unwrap()),
+            "the pinned address must survive the round trip, not widen to a wildcard",
+        );
+    }
+
+    #[test]
+    fn test_entries_reports_every_entry() {
+        let local_addr = addr_from_str("127.0.0.1").unwrap();
+        let allow_list = AllowList::new();
+        let mut allow_list = allow_list.lock().unwrap();
+        allow_list.add_entry("hash1".to_string(), Some(local_addr));
+        allow_list.add_entry("hash2".to_string(), None);
+
+        let mut entries = allow_list.entries();
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![
+                ("hash1".to_string(), Some(local_addr)),
+                ("hash2".to_string(), None),
+            ]
+        );
+
+        // entries() reports the list itself, independent of the blanket flag
+        allow_list.set_allow_all(true);
+        assert_eq!(allow_list.entries().len(), 2);
+    }
+
+    #[test]
+    fn test_allow_all_can_be_cleared() {
+        let local_addr = addr_from_str("127.0.0.1").unwrap();
+        let allow_list = AllowList::new();
+        let mut allow_list = allow_list.lock().unwrap();
+        allow_list.add_entry("hash1".to_string(), Some(local_addr));
+
+        allow_list.set_allow_all(true);
+        assert!(allow_list.is_allow_all());
+        assert!(allow_list.is_allowed(&"unknown".to_string(), local_addr));
+
+        // clearing the flag makes the recorded entries operative again
+        allow_list.set_allow_all(false);
+        assert!(!allow_list.is_allow_all());
+        assert!(allow_list.is_allowed(&"hash1".to_string(), local_addr));
+        assert!(!allow_list.is_allowed(&"unknown".to_string(), local_addr));
+    }
+
+    #[test]
+    fn test_add_entry_honours_optional_ip() {
+        let local_addr = addr_from_str("127.0.0.1").unwrap();
+        let other_addr = addr_from_str("127.0.0.2").unwrap();
+        let allow_list = AllowList::new();
+        let mut allow_list = allow_list.lock().unwrap();
+
+        allow_list.add_entry("pinned".to_string(), Some(local_addr));
+        allow_list.add_entry("wildcard".to_string(), None);
+
+        assert!(allow_list.is_allowed(&"pinned".to_string(), local_addr));
+        assert!(!allow_list.is_allowed(&"pinned".to_string(), other_addr));
+        assert!(allow_list.is_allowed(&"wildcard".to_string(), local_addr));
+        assert!(allow_list.is_allowed(&"wildcard".to_string(), other_addr));
     }
 
     #[test]
