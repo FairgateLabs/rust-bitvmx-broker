@@ -49,12 +49,12 @@ fn main() -> anyhow::Result<()> {
                     match parts.next() {
                         Some(ip_str) => {
                             if ip_str == "~" {
-                                allowlist.lock().unwrap().add_wildcard(pubk.to_string());
+                                allowlist.lock().unwrap().add_entry(pubk.to_string(), None);
                                 println!("Added {}:~", pubk);
                             } else {
                                 match IpAddr::from_str(ip_str) {
                                     Ok(ip) => {
-                                        allowlist.lock().unwrap().add(pubk.to_string(), ip);
+                                        allowlist.lock().unwrap().add_entry(pubk.to_string(), Some(ip));
                                         println!("Added {}:{}", pubk, ip);
                                     }
                                     Err(_) => println!("Invalid IP address"),
@@ -62,7 +62,7 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                         None => {
-                            allowlist.lock().unwrap().add_wildcard(pubk.to_string());
+                            allowlist.lock().unwrap().add_entry(pubk.to_string(), None);
                             println!("Added {}:~", pubk);
                         }
                     }

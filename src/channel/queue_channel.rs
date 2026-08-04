@@ -543,7 +543,7 @@ mod tests {
         BrokerSettings,
     ) {
         let allow_list = AllowList::new();
-        allow_list.lock().unwrap().allow_all();
+        allow_list.lock().unwrap().set_allow_all(true);
         let routing_table = RoutingTable::new();
         routing_table.lock().unwrap().allow_all();
         let settings = BrokerSettings::new("config/broker_settings.yaml").unwrap();

@@ -74,7 +74,7 @@ impl BrokerSync {
         let allow_list = AllowList::new();
         allow_list
             .lock_or_err::<BrokerError>("allow_list")?
-            .allow_all();
+            .set_allow_all(true);
 
         let routing = RoutingTable::new();
         routing.lock_or_err::<BrokerError>("routing")?.allow_all();
