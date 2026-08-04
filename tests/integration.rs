@@ -184,7 +184,7 @@ fn create_allow_list(identifiers: Vec<Identifier>) -> Arc<Mutex<AllowList>> {
     {
         let mut allow_list = allow_list.lock().unwrap();
         for id in identifiers {
-            allow_list.add(id.pubkey_hash, addr);
+            allow_list.add_entry(id.pubkey_hash, Some(addr));
         }
     }
     allow_list
@@ -470,7 +470,7 @@ fn test_dinamic_allow_list() {
     allow_list
         .lock()
         .unwrap()
-        .add(client2.get_pkh(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        .add_entry(client2.get_pkh(), Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
@@ -665,7 +665,7 @@ fn test_simple_channel() {
     let (server, _, _) = get_keys(port);
 
     let allow_list = AllowList::new();
-    allow_list.lock().unwrap().allow_all();
+    allow_list.lock().unwrap().set_allow_all(true);
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
 
@@ -690,7 +690,7 @@ fn test_multiple_servers() {
     let (server, client11, client12) = get_keys(port);
     let (server2, client21, client22) = get_other_keys(port + 3);
     let allow_list = AllowList::new();
-    allow_list.lock().unwrap().allow_all();
+    allow_list.lock().unwrap().set_allow_all(true);
 
     let (mut broker_server1, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());

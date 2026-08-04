@@ -66,7 +66,7 @@ fn main() {
         .expect("Failed to read private key file");
     let cert = Cert::new_with_privk(privk.as_str()).unwrap();
     let allow_list = AllowList::new();
-    allow_list.lock().unwrap().allow_all();
+    allow_list.lock().unwrap().set_allow_all(true);
     let routing = RoutingTable::new();
     routing.lock().unwrap().allow_all();
     let config = BrokerSettings::new("config/broker_settings.yaml").unwrap();
