@@ -1,342 +1,91 @@
-use super::{BrokerConfig, Message, StorageApi};
+use super::{service::run, BrokerConfig};
+use crate::storage::StorageApi;
 use crate::{
-    identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
+    identification::{allow_list::AllowList, routing::RoutingTable},
     rpc::{
-        config::MsgSizeConfig,
-        errors::{BrokerRpcError, MutexExt},
-        rate_limiter::RateLimiterManager,
-        tls_helper::{AllowListClientVerifier, Cert},
-        Broker,
+        errors::{BrokerError, MutexExt},
+        tls_helper::Cert,
     },
 };
-use futures::StreamExt;
-use rustls::{RootCertStore, ServerConfig};
-use std::{
-    future::Future,
-    net::IpAddr,
-    str::FromStr,
-    sync::{Arc, Mutex},
-};
-use tarpc::{
-    context, serde_transport,
-    server::{self, Channel},
-    tokio_serde::formats::Json,
-};
-use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
-use tokio_rustls::TlsAcceptor;
-use tokio_util::{
-    codec::{Framed, LengthDelimitedCodec},
-    sync::CancellationToken,
-};
-use tracing::{error, info, warn};
+use std::sync::{Arc, Mutex};
+use tokio::{runtime::Runtime, sync::mpsc};
+use tracing::warn;
 
-#[derive(Clone)]
-pub struct BrokerServer<S: StorageApi> {
-    client_pubkey_hash: String,
-    storage: Arc<Mutex<S>>,
-    routing: Arc<Mutex<RoutingTable>>,
-    rate_limiter: Arc<RateLimiterManager>,
-    msg_size_config: MsgSizeConfig,
+pub struct BrokerServer {
+    rt: Runtime,
+    shutdown_tx: mpsc::Sender<()>,
 }
 
-impl<S> BrokerServer<S>
-where
-    S: StorageApi,
-{
-    fn new(
-        client_pubkey_hash: String,
+impl BrokerServer {
+    pub fn new<S>(
+        config: &BrokerConfig,
         storage: Arc<Mutex<S>>,
+        cert: Cert,
+        allow_list: Arc<Mutex<AllowList>>,
         routing: Arc<Mutex<RoutingTable>>,
-        rate_limiter: Arc<RateLimiterManager>,
-        msg_size_config: MsgSizeConfig,
-    ) -> Self {
-        Self {
-            client_pubkey_hash,
-            storage,
-            routing,
-            rate_limiter,
-            msg_size_config,
-        }
-    }
-}
+    ) -> Result<Self, BrokerError>
+    where
+        S: 'static + Send + Sync + StorageApi + Clone,
+    {
+        let rt = Runtime::new()?;
 
-impl<S> Broker for BrokerServer<S>
-where
-    S: StorageApi + 'static + Send + Sync,
-{
-    async fn send(
-        self,
-        _: context::Context,
-        from_id: u8,
-        dest: Identifier,
-        msg: String,
-    ) -> Result<bool, BrokerRpcError> {
-        if !self
-            .rate_limiter
-            .check_rate_limit(&self.client_pubkey_hash)?
-        {
-            warn!(
-                "Rate limit exceeded trying to send msg for {}",
-                self.client_pubkey_hash
-            );
-            return Err(BrokerRpcError::RateLimitExceeded);
-        }
-        let from = Identifier {
-            pubkey_hash: self.client_pubkey_hash.clone(),
-            id: from_id,
-        };
-        let allowed = {
-            let routing = self.routing.lock_or_err("routing")?;
-            routing.can_route(&from, &dest)
-        };
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
-        if !allowed {
-            warn!("Routing denied: {} cannot send to {}", from, dest);
-            return Ok(false);
-        }
-        if msg.len() > (self.msg_size_config.max_frame_size_kb - 4) * 1024 {
-            // 4 for encoding overhead
-            warn!("Message too large: {} bytes", msg.len());
-            return Err(BrokerRpcError::MessageTooLarge(
-                self.msg_size_config.max_frame_size_kb - 4,
-                msg.len() / 1024,
-            ));
-        }
-        self.storage
-            .lock_or_err("storage")?
-            .insert(from, dest, msg)?;
-        Ok(true)
-    }
+        let (server_started_tx, mut server_started_rx) = mpsc::channel(1);
 
-    async fn get(
-        self,
-        _: context::Context,
-        dest_id: u8,
-    ) -> Result<Option<Message>, BrokerRpcError> {
-        if !self
-            .rate_limiter
-            .check_rate_limit(&self.client_pubkey_hash)?
-        {
-            warn!(
-                "Rate limit exceeded trying to get msg for {}",
-                self.client_pubkey_hash
-            );
-            return Err(BrokerRpcError::RateLimitExceeded);
-        }
-        let auth_dest = Identifier {
-            pubkey_hash: self.client_pubkey_hash.clone(),
-            id: dest_id,
-        };
-        Ok(self.storage.lock_or_err("storage")?.get(auth_dest)?)
-    }
+        rt.spawn(run(
+            shutdown_rx,
+            server_started_tx,
+            storage.clone(),
+            config.clone(),
+            cert.clone(),
+            allow_list.clone(),
+            routing.clone(),
+        ));
 
-    async fn ack(self, _: context::Context, dest_id: u8, uid: u64) -> Result<bool, BrokerRpcError> {
-        if !self
-            .rate_limiter
-            .check_rate_limit(&self.client_pubkey_hash)?
-        {
-            warn!(
-                "Rate limit exceeded trying to ack msg for {}",
-                self.client_pubkey_hash
-            );
-            return Err(BrokerRpcError::RateLimitExceeded);
-        }
-        let auth_dest = Identifier {
-            pubkey_hash: self.client_pubkey_hash.clone(),
-            id: dest_id,
-        };
-        Ok(self
-            .storage
-            .lock_or_err("storage")?
-            .remove(auth_dest, uid)?)
-    }
-
-    async fn ping(self, _: context::Context) -> Result<bool, BrokerRpcError> {
-        if !self
-            .rate_limiter
-            .check_rate_limit(&self.client_pubkey_hash)?
-        {
-            warn!(
-                "Rate limit exceeded trying to ping for {}",
-                self.client_pubkey_hash
-            );
-            return Err(BrokerRpcError::RateLimitExceeded);
-        }
-        Ok(true)
-    }
-}
-
-async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
-    tokio::spawn(fut);
-}
-
-type ShutDownSignal = mpsc::Receiver<()>;
-type ServerStarted = mpsc::Sender<()>;
-pub async fn run<S>(
-    mut shutdown: ShutDownSignal,
-    server_started: ServerStarted,
-    storage: Arc<Mutex<S>>,
-    config: BrokerConfig,
-    cert: Cert,
-    allow_list: Arc<Mutex<AllowList>>,
-    routing: Arc<Mutex<RoutingTable>>,
-) -> anyhow::Result<()>
-where
-    S: 'static + Send + Sync + StorageApi + Clone,
-{
-    let server_addr = (config.listen_ip, config.port);
-    let listener = TcpListener::bind(server_addr).await?;
-    info!(
-        "Listening with TLS on port {}",
-        listener.local_addr()?.port()
-    );
-
-    // Load certs, private key, and allowlist
-    let certs = cert.get_cert()?;
-    let key = cert.get_private_key()?;
-    let ca_cert_der = cert.get_ca_cert_der()?;
-
-    // Load CA
-    let mut roots = RootCertStore::empty();
-    roots.add(ca_cert_der)?;
-
-    // Server config
-    let client_verifier = Arc::new(AllowListClientVerifier::new(
-        allow_list.clone(),
-        roots.into(),
-    )?);
-
-    let server_config = ServerConfig::builder()
-        .with_client_cert_verifier(client_verifier)
-        .with_single_cert(certs, key)?;
-    let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
-
-    let rate_limiter = Arc::new(RateLimiterManager::new(
-        config.get_settings().rate_limiter_config,
-    ));
-    let cancellation_token = CancellationToken::new();
-    let mut connection_tasks: Vec<JoinHandle<()>> = Vec::new();
-    info!("Server started, waiting for TLS connections...");
-
-    server_started.send(()).await.ok();
-    let settings = config.get_settings().clone();
-
-    tokio::select! {
-        _ = async {
-            loop {
-                let (stream, addr) = match listener.accept().await {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        error!("TCP accept error: {:?}", e);
-                        continue;
-                    }
-                };
-
-                // Clone for async task
-                let acceptor = tls_acceptor.clone();
-                let storage = storage.clone();
-                let allowlist = allow_list.clone();
-                let routing = routing.clone();
-                let cancel_token = cancellation_token.clone();
-                let rate_limiter = rate_limiter.clone();
-                let settings = settings.clone();
-
-                // Spawn a new task for each connection
-                let task = tokio::spawn(async move {
-
-                    tokio::select! {
-                        _ = async{
-                            let hex_fingerprint: String;
-                            // Perform TLS handshake
-                            let tls_stream = match acceptor.accept(stream).await {
-                                Ok(tls_stream) => {
-
-                                    // Chreck if the client is authorized on the allowlist
-                                    let peer_addr = match tls_stream.get_ref().0.peer_addr() {
-                                        Ok(addr) => addr,
-                                        Err(e) => {
-                                            error!("Failed to get peer address: {:?}", e);
-                                            return;
-                                        }
-                                    };
-                                    let ipaddr = match IpAddr::from_str(&peer_addr.ip().to_string()) {
-                                        Ok(ip) => ip,
-                                        Err(e) => {
-                                            error!("Invalid IP address format: {:?}", e);
-                                            return;
-                                        }
-                                    };
-                                    let cert = match tls_stream.get_ref().1.peer_certificates() {
-                                        Some(certs) if !certs.is_empty() => certs[0].clone(),
-                                        _ => {
-                                            error!("No peer certificate found");
-                                            return;
-                                        }
-                                    };
-                                    hex_fingerprint = match Cert::get_fingerprint_hex(&cert) {
-                                        Ok(fingerprint) => fingerprint,
-                                        Err(e) => {
-                                            error!("Failed to get fingerprint: {:?}", e);
-                                            return;
-                                        }
-                                    };
-                                    let allow = match allowlist.lock() {
-                                        Ok(guard) => guard.is_allowed(&hex_fingerprint, ipaddr),
-                                        Err(e) => {
-                                            error!("Failed to lock allowlist: {:?}", e);
-                                            return;
-                                        }
-                                    };
-                                    match allow {
-                                        true => tls_stream,
-                                        false => {
-                                            error!("Unauthorized fingerprint with address {}: {}", peer_addr, hex_fingerprint);
-                                            return;
-                                        }
-                                    }
-                                },
-                                Err(e) => {
-                                    error!("TLS handshake failed: {:?}", e);
-                                    return;
-                                }
-                            };
-
-
-                            // Client is authorized
-                            let codec = LengthDelimitedCodec::builder()
-                                .max_frame_length(settings.msg_size_config.max_frame_size_kb * 1024)
-                                .new_codec();
-                            let framed = Framed::new(tls_stream, codec); // Length prefix, message boundaries
-                            let transport = serde_transport::new(framed, Json::default());
-                            server::BaseChannel::with_defaults(transport)
-                                .execute(BrokerServer::new(hex_fingerprint, storage, routing, rate_limiter, settings.msg_size_config).serve())
-                                .for_each(spawn)
-                                .await;
-
-                        } => {},
-                        _ = cancel_token.cancelled() => {
-                            tracing::debug!("Cancelled connection handler for {}", addr);
-                        }
-                    }
-                });
-
-                connection_tasks.push(task);
-            }
-        } => {},
-        _ = shutdown.recv() => {
-            info!("Shutting down...");
-            cancellation_token.cancel();
-
-            // Wait for all connection tasks to complete
-            for task in connection_tasks {
-                if let Err(e) = task.await {
-                    error!("Task join error: {:?}", e);
+        // Wait for server to start
+        rt.block_on(async {
+            match server_started_rx.recv().await {
+                Some(()) => Ok(()),
+                None => {
+                    warn!(
+                        "Broker server failed to start (sender dropped) with config: {:?}",
+                        config
+                    );
+                    Err(BrokerError::ServerStartError(format!(
+                        "Server failed to start with config: {:?}",
+                        config
+                    )))
                 }
             }
+        })?;
 
-            info!("All connections closed.");
-        },
+        Ok(Self { rt, shutdown_tx })
     }
 
-    Ok(())
+    // Do not use in production, this is for testing purposes only
+    pub fn new_simple<S>(
+        config: &BrokerConfig,
+        storage: Arc<Mutex<S>>,
+        cert: Cert,
+    ) -> Result<Self, BrokerError>
+    where
+        S: 'static + Send + Sync + StorageApi + Clone,
+    {
+        let allow_list = AllowList::new();
+        allow_list
+            .lock_or_err::<BrokerError>("allow_list")?
+            .allow_all();
+
+        let routing = RoutingTable::new();
+        routing.lock_or_err::<BrokerError>("routing")?.allow_all();
+
+        Self::new(config, storage, cert, allow_list, routing)
+    }
+
+    pub fn close(&mut self) {
+        self.rt.block_on(async {
+            let _ = self.shutdown_tx.send(()).await;
+        });
+    }
 }

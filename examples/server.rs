@@ -8,10 +8,10 @@ use std::{
 };
 
 #[cfg(feature = "storagebackend")]
-use bitvmx_broker::broker_storage;
+use bitvmx_broker::storage;
 use bitvmx_settings::settings;
 #[cfg(feature = "storagebackend")]
-use broker_storage::BrokerStorage;
+use storage::db::DbStorage;
 #[cfg(feature = "storagebackend")]
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 
@@ -19,7 +19,7 @@ use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 use bitvmx_broker::{
     identification::{allow_list::AllowList, routing::RoutingTable},
-    rpc::{config::BrokerSettings, sync_server::BrokerSync, tls_helper::Cert, BrokerConfig},
+    rpc::{config::BrokerSettings, server::BrokerServer, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
 use tracing::info;
@@ -79,7 +79,7 @@ fn main() {
 
     #[cfg(not(feature = "storagebackend"))]
     let storage = Arc::new(Mutex::new(
-        bitvmx_broker::broker_memstorage::MemStorage::new(),
+        bitvmx_broker::storage::memory::MemStorage::new(),
     ));
     #[cfg(feature = "storagebackend")]
     let storage = {
@@ -87,11 +87,11 @@ fn main() {
         let config = StorageConfig::new(storage_path.to_string(), None);
         let broker_backend = Storage::new(&config).unwrap();
         let broker_backend = Arc::new(Mutex::new(broker_backend));
-        Arc::new(Mutex::new(BrokerStorage::new(broker_backend)))
+        Arc::new(Mutex::new(DbStorage::new(broker_backend)))
     };
 
     let mut server =
-        BrokerSync::new(&config, storage.clone(), cert, allow_list.clone(), routing).unwrap();
+        BrokerServer::new(&config, storage.clone(), cert, allow_list.clone(), routing).unwrap();
 
     wait_ctrl();
     server.close();

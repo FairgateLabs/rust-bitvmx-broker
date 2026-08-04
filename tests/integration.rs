@@ -1,5 +1,5 @@
 use bitvmx_broker::{
-    channel::channel::{DualChannel, LocalChannel},
+    channel::{local::LocalChannel, remote::RemoteChannel},
     identification::{
         allow_list::AllowList,
         identifier::Identifier,
@@ -7,8 +7,8 @@ use bitvmx_broker::{
     },
     rpc::{
         errors::{BrokerError, BrokerRpcError},
-        sync_client::SyncClient,
-        sync_server::BrokerSync,
+        client::BrokerClient,
+        server::BrokerServer,
         tls_helper::Cert,
         BrokerConfig,
     },
@@ -26,9 +26,9 @@ use tracing_subscriber::{
 };
 
 #[cfg(not(feature = "storagebackend"))]
-use bitvmx_broker::broker_memstorage::MemStorage;
+use bitvmx_broker::storage::memory::MemStorage;
 #[cfg(feature = "storagebackend")]
-use bitvmx_broker::broker_storage::BrokerStorage;
+use bitvmx_broker::storage::db::DbStorage;
 #[cfg(feature = "storagebackend")]
 use storage_backend::{storage::Storage, storage_config::StorageConfig};
 
@@ -38,7 +38,7 @@ fn prepare_server(
     privk_pem: &str,
     allow_list: Arc<Mutex<AllowList>>,
     routing: Arc<Mutex<RoutingTable>>,
-) -> (BrokerSync, LocalChannel<MemStorage>) {
+) -> (BrokerServer, LocalChannel<MemStorage>) {
     let storage = Arc::new(Mutex::new(MemStorage::new()));
     let server_cert = Cert::new_with_privk(privk_pem).unwrap();
     let server_config = BrokerConfig::new(
@@ -47,7 +47,7 @@ fn prepare_server(
         server_cert.get_pubk_hash().unwrap(),
         None,
     );
-    let server = BrokerSync::new(
+    let server = BrokerServer::new(
         &server_config,
         storage.clone(),
         server_cert,
@@ -71,12 +71,12 @@ fn prepare_server(
     privk_pem: &str,
     allow_list: Arc<Mutex<AllowList>>,
     routing: Arc<Mutex<RoutingTable>>,
-) -> (BrokerSync, LocalChannel<BrokerStorage>) {
+) -> (BrokerServer, LocalChannel<DbStorage>) {
     let storage_path = format!("/tmp/storage_{}.db", port);
     let config = StorageConfig::new(storage_path.clone(), None);
     let broker_backend = Storage::new(&config).unwrap();
     let broker_backend = Arc::new(Mutex::new(broker_backend));
-    let storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
+    let storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
 
     let server_cert = Cert::new_with_privk(privk_pem).unwrap();
     let server_config = BrokerConfig::new(
@@ -85,7 +85,7 @@ fn prepare_server(
         server_cert.get_pubk_hash().unwrap(),
         None,
     );
-    let server = BrokerSync::new(
+    let server = BrokerServer::new(
         &server_config,
         storage.clone(),
         server_cert,
@@ -108,7 +108,7 @@ fn prepare_client(
     server_pubk_hash: &str,
     client_privk_pem: &str,
     allow_list: Arc<Mutex<AllowList>>,
-) -> DualChannel {
+) -> RemoteChannel {
     prepare_client_with_id(
         server_port,
         server_pubk_hash,
@@ -124,7 +124,7 @@ fn prepare_client_with_id(
     client_privk_pem: &str,
     id: Option<u8>,
     allow_list: Arc<Mutex<AllowList>>,
-) -> DualChannel {
+) -> RemoteChannel {
     let client_cert = Cert::new_with_privk(client_privk_pem).unwrap();
     let server_config = BrokerConfig::new(
         server_port,
@@ -132,7 +132,7 @@ fn prepare_client_with_id(
         server_pubk_hash.to_string(),
         None,
     );
-    let user = DualChannel::new(&server_config, client_cert, id, allow_list).unwrap();
+    let user = RemoteChannel::new(&server_config, client_cert, id, allow_list).unwrap();
     user
 }
 
@@ -284,7 +284,7 @@ fn test_ack() {
         client1.get_pkh(),
         None,
     );
-    let myclient1 = SyncClient::new(
+    let myclient1 = BrokerClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list.clone(),
@@ -297,7 +297,7 @@ fn test_ack() {
         client2.get_pkh(),
         None,
     );
-    let myclient2 = SyncClient::new(
+    let myclient2 = BrokerClient::new(
         &client_config2,
         Cert::new_with_privk(&client2.privk).unwrap(),
         allow_list,
@@ -351,7 +351,7 @@ fn test_reconnect() {
         client1.get_pkh(),
         None,
     );
-    let myclient1 = SyncClient::new(
+    let myclient1 = BrokerClient::new(
         &client_config1,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list.clone(),
@@ -364,7 +364,7 @@ fn test_reconnect() {
         client2.get_pkh(),
         None,
     );
-    let myclient2 = SyncClient::new(
+    let myclient2 = BrokerClient::new(
         &client_config2,
         Cert::new_with_privk(&client2.privk).unwrap(),
         allow_list.clone(),
@@ -670,9 +670,9 @@ fn test_simple_channel() {
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
 
     let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
-    let (user1, client1) = DualChannel::new_simple(&server_config, 0).unwrap();
+    let (user1, client1) = RemoteChannel::new_simple(&server_config, 0).unwrap();
     let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
-    let (user2, client2) = DualChannel::new_simple(&server_config, 0).unwrap();
+    let (user2, client2) = RemoteChannel::new_simple(&server_config, 0).unwrap();
 
     user1.send(&client2, "Hello!".to_string()).unwrap();
     let msg = user2.recv().unwrap().unwrap();
@@ -782,8 +782,8 @@ fn test_ca() {
         client2.get_pkh(),
         None,
     );
-    let myclient1 = SyncClient::new(&client_config1, client_cert1, allow_list.clone()).unwrap();
-    let myclient2 = SyncClient::new(&client_config2, client_cert2, allow_list.clone()).unwrap();
+    let myclient1 = BrokerClient::new(&client_config1, client_cert1, allow_list.clone()).unwrap();
+    let myclient2 = BrokerClient::new(&client_config2, client_cert2, allow_list.clone()).unwrap();
 
     //Server
     let storage = Arc::new(Mutex::new(MemStorage::new()));
@@ -794,7 +794,7 @@ fn test_ca() {
         server.get_pkh().to_string(),
         None,
     );
-    let mut broker_server = BrokerSync::new(
+    let mut broker_server = BrokerServer::new(
         &server_config,
         storage.clone(),
         server_cert,
@@ -921,7 +921,7 @@ fn test_readme_example() {
             let config = StorageConfig::new(storage_path.clone(), None);
             let broker_backend = Storage::new(&config).unwrap();
             let broker_backend = Arc::new(Mutex::new(broker_backend));
-            Arc::new(Mutex::new(BrokerStorage::new(broker_backend)))
+            Arc::new(Mutex::new(DbStorage::new(broker_backend)))
         }
     };
     // Create Server
@@ -937,7 +937,7 @@ fn test_readme_example() {
         server_pubkey_hash,
         None,
     );
-    let _server = BrokerSync::new(
+    let _server = BrokerServer::new(
         &config,
         storage.clone(),
         server_cert.clone(),
@@ -945,7 +945,7 @@ fn test_readme_example() {
         routing_table.clone(),
     );
 
-    // Create Client
+    // Create BrokerClientAsync
     let client1_cert = Cert::new().unwrap();
     let client2_cert = Cert::new().unwrap();
     let client1_identifier = Identifier::new(client1_cert.get_pubk_hash().unwrap(), 0);
@@ -973,7 +973,7 @@ fn test_readme_example() {
 
     let destination_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
 
-    let client1 = SyncClient::new(&config, client1_cert, allow_list).unwrap();
+    let client1 = BrokerClient::new(&config, client1_cert, allow_list).unwrap();
 
     client1
         .send_msg(0, destination_identifier.clone(), "hello".to_string())

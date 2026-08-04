@@ -15,7 +15,7 @@ pub struct BrokerSettings {
     #[serde(default)]
     pub rate_limiter_config: RateLimiterConfig,
     #[serde(default)]
-    pub queue_channel_config: QueueChannelConfig,
+    pub broker_node_config: BrokerNodeConfig,
     #[serde(default)]
     pub msg_size_config: MsgSizeConfig,
 }
@@ -28,7 +28,7 @@ pub struct RateLimiterConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueChannelConfig {
+pub struct BrokerNodeConfig {
     pub max_msgs_per_tick_utilization: f64,
     pub max_send_attempts: u8,
     pub retry_min_delay_msecs: u64,
@@ -51,7 +51,7 @@ impl Default for RateLimiterConfig {
     }
 }
 
-impl Default for QueueChannelConfig {
+impl Default for BrokerNodeConfig {
     fn default() -> Self {
         warn!("No queue channel config found, using defaults");
         Self {
@@ -77,7 +77,7 @@ impl Default for BrokerSettings {
         warn!("No broker settings found, using defaults");
         Self {
             rate_limiter_config: RateLimiterConfig::default(),
-            queue_channel_config: QueueChannelConfig::default(),
+            broker_node_config: BrokerNodeConfig::default(),
             msg_size_config: MsgSizeConfig::default(),
         }
     }

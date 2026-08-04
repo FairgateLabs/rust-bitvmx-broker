@@ -1,6 +1,7 @@
 use crate::{
     identification::identifier::Identifier,
-    rpc::{errors::BrokerRpcError, Message, StorageApi},
+    rpc::{errors::BrokerRpcError, Message},
+    storage::StorageApi,
 };
 use std::collections::{HashMap, VecDeque};
 
