@@ -1,4 +1,4 @@
-use crate::{channel::retry_helper::RetryPolicyError, identification};
+use crate::{retry::RetryPolicyError, identification};
 use bitvmx_settings::errors::ConfigError;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};

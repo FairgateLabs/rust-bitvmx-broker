@@ -1,4 +1,4 @@
-// The BrokerStorage uses one key to store the uid and multiple keys to store the messages.
+// The DbStorage uses one key to store the uid and multiple keys to store the messages.
 // The key "broker_current_uid" stores the current uid.
 // The keys "broker_msg_{dest}_{uid}_{from}" store the messages.
 // To list the messages for an specific destination, we use the partial_compare_keys
@@ -8,16 +8,17 @@
 
 use crate::identification::identifier::Identifier;
 use crate::rpc::errors::BrokerRpcError;
-use crate::rpc::{Message, StorageApi};
+use crate::rpc::Message;
+use crate::storage::StorageApi;
 use std::sync::{Arc, Mutex};
 use storage_backend::storage::{KeyValueStore, Storage};
 
 #[derive(Clone)]
-pub struct BrokerStorage {
+pub struct DbStorage {
     storage: Arc<Mutex<Storage>>,
 }
 
-impl BrokerStorage {
+impl DbStorage {
     pub fn new(storage: Arc<Mutex<Storage>>) -> Self {
         Self { storage }
     }
@@ -27,7 +28,7 @@ fn format_uid(uid: u64) -> String {
     format!("{:0>20}", uid)
 }
 
-impl StorageApi for BrokerStorage {
+impl StorageApi for DbStorage {
     fn get(&mut self, dest: Identifier) -> Result<Option<Message>, BrokerRpcError> {
         let storage_lock = self
             .storage

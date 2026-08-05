@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::info;
 
-use crate::rpc::config::QueueChannelConfig;
+use crate::rpc::config::BrokerNodeConfig;
 
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
@@ -14,7 +14,7 @@ pub struct RetryPolicy {
 }
 
 impl RetryPolicy {
-    pub fn new(config: &QueueChannelConfig) -> Result<Self, RetryPolicyError> {
+    pub fn new(config: &BrokerNodeConfig) -> Result<Self, RetryPolicyError> {
         let min_delay_ms = config.retry_min_delay_msecs;
         let max_delay_ms = config.retry_max_delay_msecs;
         let max_attempts = config.max_send_attempts;

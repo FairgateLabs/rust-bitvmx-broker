@@ -10,12 +10,12 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 pub mod client;
+pub mod client_async;
 pub mod config;
 pub mod errors;
 pub mod rate_limiter;
 pub mod server;
-pub mod sync_client;
-pub mod sync_server;
+pub mod service;
 pub mod tls_helper;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -26,7 +26,7 @@ pub struct Message {
 }
 
 #[tarpc::service]
-pub(crate) trait Broker {
+pub(crate) trait BrokerApi {
     async fn send(from_id: u8, dest: Identifier, msg: String) -> Result<bool, BrokerRpcError>;
     async fn get(dest_id: u8) -> Result<Option<Message>, BrokerRpcError>;
     async fn ack(dest_id: u8, uid: u64) -> Result<bool, BrokerRpcError>;
@@ -110,14 +110,3 @@ impl BrokerConfig {
     }
 }
 
-pub trait StorageApi {
-    fn get(&mut self, dest: Identifier) -> Result<Option<Message>, BrokerRpcError>;
-    fn get_all(&mut self, dest: Identifier) -> Result<Vec<Message>, BrokerRpcError>;
-    fn insert(
-        &mut self,
-        from: Identifier,
-        dest: Identifier,
-        msg: String,
-    ) -> Result<(), BrokerRpcError>;
-    fn remove(&mut self, dest: Identifier, uid: u64) -> Result<bool, BrokerRpcError>;
-}

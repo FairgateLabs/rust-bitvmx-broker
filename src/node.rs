@@ -15,25 +15,23 @@ use tokio::runtime::Runtime;
 use tracing::{info, warn};
 
 use crate::{
-    broker_storage::BrokerStorage,
-    channel::{
-        channel::LocalChannel,
-        retry_helper::{now_ms, RetryPolicy, RetryState},
-    },
+    storage::db::DbStorage,
+    channel::local::LocalChannel,
+    retry::{now_ms, RetryPolicy, RetryState},
     identification::{
         allow_list::AllowList,
         identifier::{Identifier, PubkHash},
         routing::RoutingTable,
     },
     rpc::{
-        config::BrokerSettings, errors::BrokerError, sync_client::SyncClient,
-        sync_server::BrokerSync, tls_helper::Cert, BrokerConfig,
+        config::BrokerSettings, errors::BrokerError, client::BrokerClient,
+        server::BrokerServer, tls_helper::Cert, BrokerConfig,
     },
     settings::COMMS_ID,
 };
 
 #[derive(Debug)]
-pub enum ReceiveHandlerChannel {
+pub enum ReceivedMessage {
     Msg(Identifier, Vec<u8>), //Id, Msg
     Error(BrokerError),
 }
@@ -45,10 +43,10 @@ struct OutgoingMsg {
     retry: RetryState,
 }
 
-pub struct QueueChannel {
+pub struct BrokerNode {
     name: String,
-    server: BrokerSync,
-    local_channel: LocalChannel<BrokerStorage>,
+    server: BrokerServer,
+    local_channel: LocalChannel<DbStorage>,
     cert: Cert,
     address: SocketAddr,
     storage: Rc<Storage>,
@@ -75,7 +73,7 @@ impl ToString for QueueType {
     }
 }
 
-impl QueueChannel {
+impl BrokerNode {
     pub fn new(
         name: &str,
         address: SocketAddr,
@@ -94,7 +92,7 @@ impl QueueChannel {
         let config = StorageConfig::new(storage_path.clone(), None);
         let broker_backend = Storage::new(&config)?;
         let broker_backend = Arc::new(Mutex::new(broker_backend));
-        let broker_storage = Arc::new(Mutex::new(BrokerStorage::new(broker_backend)));
+        let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
 
         let cert = Cert::new_with_privk(privk)?;
         let pubk_hash = cert.get_pubk_hash()?;
@@ -105,7 +103,7 @@ impl QueueChannel {
             Some(broker_settings.clone()),
         );
 
-        let server = BrokerSync::new(
+        let server = BrokerServer::new(
             &broker_config,
             broker_storage.clone(),
             cert.clone(),
@@ -121,7 +119,7 @@ impl QueueChannel {
             broker_storage.clone(),
         );
 
-        let retry_policy = RetryPolicy::new(&broker_settings.queue_channel_config)?;
+        let retry_policy = RetryPolicy::new(&broker_settings.broker_node_config)?;
 
         let rt = Arc::new(Mutex::new(Runtime::new()?));
 
@@ -280,7 +278,7 @@ impl QueueChannel {
         let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
         let max_per_dest = self.max_msgs_per_tick(
             self.broker_settings
-                .queue_channel_config
+                .broker_node_config
                 .max_msgs_per_tick_utilization,
         ); // use 50% of capacity
         let now = now_ms()?;
@@ -364,7 +362,7 @@ impl QueueChannel {
             Some(self.broker_settings.clone()),
         );
 
-        let sync_client = SyncClient::new_with_runtime(
+        let client = BrokerClient::new_with_runtime(
             &server_config,
             self.cert.clone(),
             self.allow_list.clone(),
@@ -372,7 +370,7 @@ impl QueueChannel {
         )?;
 
         let identifier = Identifier::new(dest_pubk_hash.to_string(), COMMS_ID);
-        sync_client.send_msg(COMMS_ID, identifier, msg.to_string())
+        client.send_msg(COMMS_ID, identifier, msg.to_string())
     }
 
     fn process_in_queue(&self) -> Result<(), BrokerError> {
@@ -408,7 +406,7 @@ impl QueueChannel {
     fn check_reception(
         &mut self,
         queue_type: &QueueType,
-    ) -> Result<Vec<(ReceiveHandlerChannel, Option<String>)>, BrokerError> {
+    ) -> Result<Vec<(ReceivedMessage, Option<String>)>, BrokerError> {
         let mut storage_keys = self
             .storage
             .partial_compare_keys(&self.partial_compare_keys(queue_type), None)?
@@ -449,7 +447,7 @@ impl QueueChannel {
                     _ => continue,
                 };
 
-                messages.push((ReceiveHandlerChannel::Msg(identifier, data), ctx));
+                messages.push((ReceivedMessage::Msg(identifier, data), ctx));
 
                 self.storage.remove(&key, None)?;
             }
@@ -458,7 +456,7 @@ impl QueueChannel {
         Ok(messages)
     }
 
-    pub fn check_receive(&mut self) -> Result<Vec<ReceiveHandlerChannel>, BrokerError> {
+    pub fn check_receive(&mut self) -> Result<Vec<ReceivedMessage>, BrokerError> {
         self.check_reception(&QueueType::InQueue)?
             .into_iter()
             .map(|(channel, err)| {
@@ -477,7 +475,7 @@ impl QueueChannel {
     // Returns messages in dead letter queue with their corresponding context
     pub fn check_deadletter(
         &mut self,
-    ) -> Result<Vec<(ReceiveHandlerChannel, String)>, BrokerError> {
+    ) -> Result<Vec<(ReceivedMessage, String)>, BrokerError> {
         self.check_reception(&QueueType::DeadLetterQueue)?
             .into_iter()
             .map(|(channel, err)| {
@@ -591,11 +589,11 @@ mod tests {
         PeerInfo::new(privk, port)
     }
 
-    fn get_queue_channels(port: u16) -> (QueueChannel, QueueChannel, QueueChannel) {
+    fn get_broker_nodes(port: u16) -> (BrokerNode, BrokerNode, BrokerNode) {
         let (allow_list, routing_table, settings) = get_allow_routing_settings();
         let (peer1, peer2, peer3) = get_peers_info(port);
 
-        let queue_channel1 = QueueChannel::new(
+        let broker_node1 = BrokerNode::new(
             "testqueue",
             peer1.address,
             &peer1.privk,
@@ -607,7 +605,7 @@ mod tests {
         )
         .unwrap();
 
-        let queue_channel2 = QueueChannel::new(
+        let broker_node2 = BrokerNode::new(
             "testqueue",
             peer2.address,
             &peer2.privk,
@@ -619,7 +617,7 @@ mod tests {
         )
         .unwrap();
 
-        let queue_channel3 = QueueChannel::new(
+        let broker_node3 = BrokerNode::new(
             "testqueue",
             peer3.address,
             &peer3.privk,
@@ -631,14 +629,14 @@ mod tests {
         )
         .unwrap();
 
-        (queue_channel1, queue_channel2, queue_channel3)
+        (broker_node1, broker_node2, broker_node3)
     }
 
     // Get single queue channel for tests (peer1, peer2, or peer3)
-    fn get_queue_channel(port: u16, peer: u8) -> QueueChannel {
+    fn get_broker_node(port: u16, peer: u8) -> BrokerNode {
         let (allow_list, routing_table, settings) = get_allow_routing_settings();
         let selected_peer = get_peer_info(port, peer);
-        let queue_channel = QueueChannel::new(
+        let broker_node = BrokerNode::new(
             "testqueue",
             selected_peer.address,
             &selected_peer.privk,
@@ -650,18 +648,18 @@ mod tests {
         )
         .unwrap();
 
-        queue_channel
+        broker_node
     }
 
     fn assert_msgs_received(
-        received_msgs: &Vec<ReceiveHandlerChannel>,
+        received_msgs: &Vec<ReceivedMessage>,
         expected_msgs: &Vec<Vec<u8>>,
         expected_pubk_hashes: &Vec<PubkHash>,
     ) {
         assert_eq!(received_msgs.len(), expected_msgs.len());
         for (i, received_msg) in received_msgs.iter().enumerate() {
             match received_msg {
-                ReceiveHandlerChannel::Msg(identifier, data) => {
+                ReceivedMessage::Msg(identifier, data) => {
                     assert_eq!(data, &expected_msgs[i]);
                     assert_eq!(identifier.pubkey_hash, expected_pubk_hashes[i]);
                 }
@@ -683,36 +681,36 @@ mod tests {
         let port = 12000;
         cleanup_storage(port, 3);
 
-        let (mut queue_channel1, mut queue_channel2, mut queue_channel3) = get_queue_channels(port);
+        let (mut broker_node1, mut broker_node2, mut broker_node3) = get_broker_nodes(port);
 
         let msg = b"Hello, World!".to_vec();
 
-        queue_channel1
+        broker_node1
             .send(
                 CTX,
-                &queue_channel2.get_pubk_hash().unwrap(),
-                queue_channel2.get_address(),
+                &broker_node2.get_pubk_hash().unwrap(),
+                broker_node2.get_address(),
                 msg.clone(),
             )
             .unwrap();
 
-        queue_channel1.tick().unwrap();
-        queue_channel2.tick().unwrap();
+        broker_node1.tick().unwrap();
+        broker_node2.tick().unwrap();
 
-        let received_msgs = queue_channel2.check_receive().unwrap();
+        let received_msgs = broker_node2.check_receive().unwrap();
         assert_msgs_received(
             &received_msgs,
             &vec![msg],
-            &vec![queue_channel1.get_pubk_hash().unwrap()],
+            &vec![broker_node1.get_pubk_hash().unwrap()],
         );
 
         // Close and cleanup
-        queue_channel1.close();
-        queue_channel2.close();
-        queue_channel3.close();
-        drop(queue_channel1);
-        drop(queue_channel2);
-        drop(queue_channel3);
+        broker_node1.close();
+        broker_node2.close();
+        broker_node3.close();
+        drop(broker_node1);
+        drop(broker_node2);
+        drop(broker_node3);
         cleanup_storage(port, 3);
     }
 
@@ -721,54 +719,54 @@ mod tests {
         let port = 12003;
         cleanup_storage(port, 3);
 
-        let (mut queue_channel1, mut queue_channel2, mut queue_channel3) = get_queue_channels(port);
+        let (mut broker_node1, mut broker_node2, mut broker_node3) = get_broker_nodes(port);
 
         let msg1 = b"Message from Channel 1".to_vec();
         let msg2 = b"Message from Channel 2".to_vec();
 
-        queue_channel1
+        broker_node1
             .send(
                 CTX,
-                &queue_channel2.get_pubk_hash().unwrap(),
-                queue_channel2.get_address(),
+                &broker_node2.get_pubk_hash().unwrap(),
+                broker_node2.get_address(),
                 msg1.clone(),
             )
             .unwrap();
-        queue_channel2
+        broker_node2
             .send(
                 CTX,
-                &queue_channel1.get_pubk_hash().unwrap(),
-                queue_channel1.get_address(),
+                &broker_node1.get_pubk_hash().unwrap(),
+                broker_node1.get_address(),
                 msg2.clone(),
             )
             .unwrap();
 
-        queue_channel1.tick().unwrap();
-        queue_channel2.tick().unwrap();
-        queue_channel1.tick().unwrap(); // Extra tick so that channel1 can process incoming msg
+        broker_node1.tick().unwrap();
+        broker_node2.tick().unwrap();
+        broker_node1.tick().unwrap(); // Extra tick so that channel1 can process incoming msg
 
-        let received_msgs1 = queue_channel1.check_receive().unwrap();
-        let received_msgs2 = queue_channel2.check_receive().unwrap();
+        let received_msgs1 = broker_node1.check_receive().unwrap();
+        let received_msgs2 = broker_node2.check_receive().unwrap();
 
         assert_msgs_received(
             &received_msgs1,
             &vec![msg2],
-            &vec![queue_channel2.get_pubk_hash().unwrap()],
+            &vec![broker_node2.get_pubk_hash().unwrap()],
         );
 
         assert_msgs_received(
             &received_msgs2,
             &vec![msg1],
-            &vec![queue_channel1.get_pubk_hash().unwrap()],
+            &vec![broker_node1.get_pubk_hash().unwrap()],
         );
 
         // Close and cleanup
-        queue_channel1.close();
-        queue_channel2.close();
-        queue_channel3.close();
-        drop(queue_channel1);
-        drop(queue_channel2);
-        drop(queue_channel3);
+        broker_node1.close();
+        broker_node2.close();
+        broker_node3.close();
+        drop(broker_node1);
+        drop(broker_node2);
+        drop(broker_node3);
         cleanup_storage(port, 3);
     }
 
@@ -777,46 +775,46 @@ mod tests {
         let port = 12006;
         cleanup_storage(port, 3);
 
-        let (mut queue_channel1, mut queue_channel2, mut queue_channel3) = get_queue_channels(port);
+        let (mut broker_node1, mut broker_node2, mut broker_node3) = get_broker_nodes(port);
 
         let msg = b"Persistent Message".to_vec();
 
-        queue_channel1
+        broker_node1
             .send(
                 CTX,
-                &queue_channel2.get_pubk_hash().unwrap(),
-                queue_channel2.get_address(),
+                &broker_node2.get_pubk_hash().unwrap(),
+                broker_node2.get_address(),
                 msg.clone(),
             )
             .unwrap();
 
-        // Simulate reconnecting by closing and dropping queue_channel2 and creating a new one
-        queue_channel2.close();
-        drop(queue_channel2);
-        queue_channel1.tick().unwrap();
-        queue_channel2 = get_queue_channel(port, 2);
+        // Simulate reconnecting by closing and dropping broker_node2 and creating a new one
+        broker_node2.close();
+        drop(broker_node2);
+        broker_node1.tick().unwrap();
+        broker_node2 = get_broker_node(port, 2);
 
         // After reconnecting no messages should be received yet
-        let received_msgs = queue_channel2.check_receive().unwrap();
+        let received_msgs = broker_node2.check_receive().unwrap();
         assert_eq!(received_msgs.len(), 0);
 
         // Tick again to process any queued messages
-        queue_channel1.tick().unwrap();
-        queue_channel2.tick().unwrap();
-        let received_msgs = queue_channel2.check_receive().unwrap();
+        broker_node1.tick().unwrap();
+        broker_node2.tick().unwrap();
+        let received_msgs = broker_node2.check_receive().unwrap();
         assert_msgs_received(
             &received_msgs,
             &vec![msg],
-            &vec![queue_channel1.get_pubk_hash().unwrap()],
+            &vec![broker_node1.get_pubk_hash().unwrap()],
         );
 
         // Close and cleanup
-        queue_channel1.close();
-        queue_channel2.close();
-        queue_channel3.close();
-        drop(queue_channel1);
-        drop(queue_channel2);
-        drop(queue_channel3);
+        broker_node1.close();
+        broker_node2.close();
+        broker_node3.close();
+        drop(broker_node1);
+        drop(broker_node2);
+        drop(broker_node3);
         cleanup_storage(port, 3);
     }
 
@@ -825,7 +823,7 @@ mod tests {
         let port = 12009;
         cleanup_storage(port, 3);
 
-        let (mut sender, mut receiver, mut queue_channel3) = get_queue_channels(port);
+        let (mut sender, mut receiver, mut broker_node3) = get_broker_nodes(port);
 
         let mut sent_msgs = Vec::new();
         let mut expected_hashes = Vec::new();
@@ -856,7 +854,7 @@ mod tests {
         // Verify FIFO order
         for (i, recv) in received.iter().enumerate() {
             match recv {
-                ReceiveHandlerChannel::Msg(_, data) => {
+                ReceivedMessage::Msg(_, data) => {
                     assert_eq!(data, &sent_msgs[i], "Message order violated at index {}", i);
                 }
                 _ => panic!("Expected Msg"),
@@ -865,10 +863,10 @@ mod tests {
 
         sender.close();
         receiver.close();
-        queue_channel3.close();
+        broker_node3.close();
         drop(sender);
         drop(receiver);
-        drop(queue_channel3);
+        drop(broker_node3);
         cleanup_storage(port, 3);
     }
 
@@ -879,9 +877,9 @@ mod tests {
 
         let (_, _, settings) = get_allow_routing_settings();
 
-        let (mut sender, mut receiver1, mut receiver2) = get_queue_channels(port);
+        let (mut sender, mut receiver1, mut receiver2) = get_broker_nodes(port);
         let max_per_dest =
-            sender.max_msgs_per_tick(settings.queue_channel_config.max_msgs_per_tick_utilization);
+            sender.max_msgs_per_tick(settings.broker_node_config.max_msgs_per_tick_utilization);
 
         // Send more than allowed per tick
         let excess_msgs = 3;
@@ -939,7 +937,7 @@ mod tests {
             .into_iter()
             .chain(recv1_second.into_iter())
             .map(|msg| match msg {
-                ReceiveHandlerChannel::Msg(_, data) => data,
+                ReceivedMessage::Msg(_, data) => data,
                 _ => panic!("Unexpected error"),
             })
             .collect();
@@ -947,7 +945,7 @@ mod tests {
             .into_iter()
             .chain(recv2_second.into_iter())
             .map(|msg| match msg {
-                ReceiveHandlerChannel::Msg(_, data) => data,
+                ReceivedMessage::Msg(_, data) => data,
                 _ => panic!("Unexpected error"),
             })
             .collect();
@@ -969,7 +967,7 @@ mod tests {
         cleanup_storage(port, 3);
 
         let (_, _, settings) = get_allow_routing_settings();
-        let (mut sender, mut receiver, mut queue_channel3) = get_queue_channels(port);
+        let (mut sender, mut receiver, mut broker_node3) = get_broker_nodes(port);
 
         // Close receiver server to simulate disconnection
         let receiver_addr = receiver.get_address();
@@ -986,8 +984,8 @@ mod tests {
         // Keep ticking until message appears in dead letter queue or timeout
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_millis(
-            settings.queue_channel_config.retry_max_delay_msecs
-                * settings.queue_channel_config.max_send_attempts as u64,
+            settings.broker_node_config.retry_max_delay_msecs
+                * settings.broker_node_config.max_send_attempts as u64,
         );
 
         loop {
@@ -997,7 +995,7 @@ mod tests {
             if !deadletters.is_empty() {
                 assert_eq!(deadletters.len(), 1);
                 match &deadletters[0] {
-                    (ReceiveHandlerChannel::Msg(_, data), ctx) => {
+                    (ReceivedMessage::Msg(_, data), ctx) => {
                         assert_eq!(data, &msg);
                         assert_eq!(ctx, CTX);
                     }
@@ -1014,9 +1012,9 @@ mod tests {
         }
 
         sender.close();
-        queue_channel3.close();
+        broker_node3.close();
         drop(sender);
-        drop(queue_channel3);
+        drop(broker_node3);
         cleanup_storage(port, 3);
     }
 
