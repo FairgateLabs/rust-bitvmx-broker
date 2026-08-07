@@ -1,5 +1,5 @@
 use super::{BrokerConfig, Message};
-use crate::storage::StorageApi;
+use crate::storage::BrokerServerStorage;
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
@@ -32,21 +32,18 @@ use tokio_util::{
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
-pub struct BrokerService<S: StorageApi> {
+pub struct BrokerService {
     client_pubkey_hash: String,
-    storage: Arc<Mutex<S>>,
+    storage: BrokerServerStorage,
     routing: Arc<Mutex<RoutingTable>>,
     rate_limiter: Arc<RateLimiterManager>,
     msg_size_config: MsgSizeConfig,
 }
 
-impl<S> BrokerService<S>
-where
-    S: StorageApi,
-{
+impl BrokerService {
     fn new(
         client_pubkey_hash: String,
-        storage: Arc<Mutex<S>>,
+        storage: BrokerServerStorage,
         routing: Arc<Mutex<RoutingTable>>,
         rate_limiter: Arc<RateLimiterManager>,
         msg_size_config: MsgSizeConfig,
@@ -61,10 +58,7 @@ where
     }
 }
 
-impl<S> BrokerApi for BrokerService<S>
-where
-    S: StorageApi + 'static + Send + Sync,
-{
+impl BrokerApi for BrokerService {
     async fn send(
         self,
         _: context::Context,
@@ -87,7 +81,7 @@ where
             id: from_id,
         };
         let allowed = {
-            let routing = self.routing.lock_or_err("routing")?;
+            let routing = self.routing.lock_or_err::<BrokerRpcError>("routing")?;
             routing.can_route(&from, &dest)
         };
 
@@ -103,9 +97,7 @@ where
                 msg.len() / 1024,
             ));
         }
-        self.storage
-            .lock_or_err("storage")?
-            .insert(from, dest, msg)?;
+        self.storage.insert(from, dest, msg)?;
         Ok(true)
     }
 
@@ -128,7 +120,7 @@ where
             pubkey_hash: self.client_pubkey_hash.clone(),
             id: dest_id,
         };
-        Ok(self.storage.lock_or_err("storage")?.get(auth_dest)?)
+        Ok(self.storage.get(auth_dest)?)
     }
 
     async fn ack(self, _: context::Context, dest_id: u8, uid: u64) -> Result<bool, BrokerRpcError> {
@@ -146,10 +138,7 @@ where
             pubkey_hash: self.client_pubkey_hash.clone(),
             id: dest_id,
         };
-        Ok(self
-            .storage
-            .lock_or_err("storage")?
-            .remove(auth_dest, uid)?)
+        Ok(self.storage.remove(auth_dest, uid)?)
     }
 
     async fn ping(self, _: context::Context) -> Result<bool, BrokerRpcError> {
@@ -173,18 +162,15 @@ async fn spawn(fut: impl Future<Output = ()> + Send + 'static) {
 
 type ShutDownSignal = mpsc::Receiver<()>;
 type ServerStarted = mpsc::Sender<()>;
-pub async fn run<S>(
+pub async fn run(
     mut shutdown: ShutDownSignal,
     server_started: ServerStarted,
-    storage: Arc<Mutex<S>>,
+    storage: BrokerServerStorage,
     config: BrokerConfig,
     cert: Cert,
     allow_list: Arc<Mutex<AllowList>>,
     routing: Arc<Mutex<RoutingTable>>,
-) -> anyhow::Result<()>
-where
-    S: 'static + Send + Sync + StorageApi + Clone,
-{
+) -> anyhow::Result<()> {
     let server_addr = (config.listen_ip, config.port);
     let listener = TcpListener::bind(server_addr).await?;
     info!(
