@@ -7,15 +7,12 @@ use std::{
 
 use bitvmx_settings::settings;
 use serde::{Deserialize, Serialize};
-use storage_backend::{
-    storage::{KeyValueStore, Storage},
-    storage_config::StorageConfig,
-};
+use storage_backend::storage::Storage;
 use tokio::runtime::Runtime;
 use tracing::{info, warn};
 
 use crate::{
-    storage::db::DbStorage,
+    storage::{BrokerNodeStorage, QueueType},
     channel::local::LocalChannel,
     retry::{now_ms, RetryPolicy, RetryState},
     identification::{
@@ -44,33 +41,16 @@ struct OutgoingMsg {
 }
 
 pub struct BrokerNode {
-    name: String,
     server: BrokerServer,
-    local_channel: LocalChannel<DbStorage>,
+    local_channel: LocalChannel,
     cert: Cert,
     address: SocketAddr,
-    storage: Rc<Storage>,
+    storage: BrokerNodeStorage,
     allow_list: Arc<Mutex<AllowList>>,
     routing_table: Arc<Mutex<RoutingTable>>,
     retry_policy: RetryPolicy,
     rt: Arc<Mutex<Runtime>>,
     broker_settings: BrokerSettings,
-}
-
-enum QueueType {
-    OutQueue,
-    InQueue,
-    DeadLetterQueue, // For messages that could not be delivered
-}
-
-impl ToString for QueueType {
-    fn to_string(&self) -> String {
-        match self {
-            QueueType::OutQueue => "outqueue".to_string(),
-            QueueType::InQueue => "inqueue".to_string(),
-            QueueType::DeadLetterQueue => "deadletterqueue".to_string(),
-        }
-    }
 }
 
 impl BrokerNode {
@@ -79,21 +59,11 @@ impl BrokerNode {
         address: SocketAddr,
         privk: &str,
         storage: Rc<Storage>,
-        storage_path: Option<String>,
+        server_storage_path: &str,
         allow_list: Arc<Mutex<AllowList>>,
         routing_table: Arc<Mutex<RoutingTable>>,
         broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
-        // Initialize path for receiving message storage
-        let storage_path = match storage_path {
-            Some(path) => path,
-            None => format!("/tmp/broker_comms_{}", address.port()),
-        };
-        let config = StorageConfig::new(storage_path.clone(), None);
-        let broker_backend = Storage::new(&config)?;
-        let broker_backend = Arc::new(Mutex::new(broker_backend));
-        let broker_storage = Arc::new(Mutex::new(DbStorage::new(broker_backend)));
-
         let cert = Cert::new_with_privk(privk)?;
         let pubk_hash = cert.get_pubk_hash()?;
         let broker_config = BrokerConfig::new(
@@ -105,31 +75,27 @@ impl BrokerNode {
 
         let server = BrokerServer::new(
             &broker_config,
-            broker_storage.clone(),
+            server_storage_path,
             cert.clone(),
             allow_list.clone(),
             routing_table.clone(),
         )?;
 
-        let local_channel = LocalChannel::new(
-            Identifier {
-                pubkey_hash: pubk_hash.clone(),
-                id: COMMS_ID,
-            },
-            broker_storage.clone(),
-        );
+        let local_channel = server.create_local_channel(Identifier {
+            pubkey_hash: pubk_hash.clone(),
+            id: COMMS_ID,
+        });
 
         let retry_policy = RetryPolicy::new(&broker_settings.broker_node_config)?;
 
         let rt = Arc::new(Mutex::new(Runtime::new()?));
 
         Ok(Self {
-            name: name.to_string(),
             server,
             local_channel,
             cert,
             address,
-            storage,
+            storage: BrokerNodeStorage::new(storage, name),
             allow_list,
             routing_table,
             retry_policy,
@@ -143,7 +109,7 @@ impl BrokerNode {
         address: SocketAddr,
         privk: &str, //File with PEM format
         storage: Rc<Storage>,
-        storage_path: Option<String>,
+        server_storage_path: &str,
         allow_list: &str,
         routing_table: &str,
         broker_settings: BrokerSettings,
@@ -156,64 +122,11 @@ impl BrokerNode {
             address,
             &privk,
             storage,
-            storage_path,
+            server_storage_path,
             allow_list,
             routing_table,
             broker_settings,
         )
-    }
-
-    fn storage_out_key(&self, id: u64, pubk_hash: &PubkHash, address: &SocketAddr) -> String {
-        format!(
-            "broker/{}/{}/msgs/{}/{}/{}",
-            QueueType::OutQueue.to_string(),
-            self.name,
-            id,
-            pubk_hash,
-            address
-        )
-    }
-
-    fn storage_in_key(&self, id: u64, identifier: &Identifier) -> String {
-        format!(
-            "broker/{}/{}/msgs/{}/{}/{}",
-            QueueType::InQueue.to_string(),
-            self.name,
-            id,
-            identifier.pubkey_hash,
-            identifier.id
-        )
-    }
-
-    fn storage_deadletter_key(
-        &self,
-        id: u64,
-        pubk_hash: &PubkHash,
-        address: &SocketAddr,
-    ) -> String {
-        format!(
-            "broker/{}/{}/msgs/{}/{}/{}",
-            QueueType::DeadLetterQueue.to_string(),
-            self.name,
-            id,
-            pubk_hash,
-            address
-        )
-    }
-
-    fn storage_idx_key(&self, queue: &QueueType) -> String {
-        format!("broker/{}/{}/uid", queue.to_string(), self.name)
-    }
-
-    fn partial_compare_keys(&self, queue: &QueueType) -> String {
-        format!("broker/{}/{}/msgs/", queue.to_string(), self.name)
-    }
-
-    fn get_next_idx(&self, queue: &QueueType) -> Result<u64, BrokerError> {
-        let key = self.storage_idx_key(queue);
-        let current_idx: u64 = self.storage.get(&key, None).unwrap_or(None).unwrap_or(0) + 1;
-        self.storage.set(&key, current_idx, None)?;
-        Ok(current_idx)
     }
 
     fn enqueue_out_msg(
@@ -223,29 +136,14 @@ impl BrokerNode {
         address: &SocketAddr,
         data: Vec<u8>,
     ) -> Result<(), BrokerError> {
-        let idx = self.get_next_idx(&QueueType::OutQueue)?;
-        let key = self.storage_out_key(idx, pubk_hash, address);
         let msg = OutgoingMsg {
             payload: serde_json::to_string(&data)?,
             ctx: ctx.to_string(),
             retry: RetryState::new(now_ms()?), // Initial attempt
         };
 
-        self.storage.set(&key, serde_json::to_string(&msg)?, None)?;
-
-        Ok(())
-    }
-
-    fn enqueue_deadletter_msg(
-        &self,
-        pubk_hash: &PubkHash,
-        address: &SocketAddr,
-        data: &str,
-    ) -> Result<(), BrokerError> {
-        let idx = self.get_next_idx(&QueueType::DeadLetterQueue)?;
-        let key = self.storage_deadletter_key(idx, pubk_hash, address);
-
-        self.storage.set(&key, data, None)?;
+        self.storage
+            .enqueue_out(pubk_hash, address, &serde_json::to_string(&msg)?)?;
 
         Ok(())
     }
@@ -262,18 +160,6 @@ impl BrokerNode {
     }
 
     fn process_out_queue(&self) -> Result<(), BrokerError> {
-        let mut storage_keys = self
-            .storage
-            .partial_compare_keys(&self.partial_compare_keys(&QueueType::OutQueue), None)?
-            .into_iter()
-            .collect::<Vec<String>>();
-        storage_keys.sort_by_key(|key| {
-            key.split('/')
-                .nth(4) // index position
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(u64::MAX)
-        });
-
         // send up to 50% of max capacity messages per tick
         let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
         let max_per_dest = self.max_msgs_per_tick(
@@ -283,19 +169,12 @@ impl BrokerNode {
         ); // use 50% of capacity
         let now = now_ms()?;
 
-        for key in storage_keys {
-            if let Some(raw) = self.storage.get::<_, String>(&key, None)? {
-                let parts: Vec<&str> = key.split('/').collect();
-                if parts.len() < 7 {
-                    continue;
-                }
-                let pubk_hash = parts[5];
-                let address_str = parts[6];
-
-                let address: SocketAddr = address_str.parse()?;
+        for key in self.storage.sorted_keys(&QueueType::OutQueue)? {
+            if let Some(raw) = self.storage.get(&key)? {
+                let (pubk_hash, address) = BrokerNodeStorage::dest_from_key(&key)?;
 
                 // check if destination has not exceeded max messages per tick by destination pubk_hash
-                let sent = sent_per_dest.entry(pubk_hash.to_owned()).or_insert(0);
+                let sent = sent_per_dest.entry(pubk_hash.clone()).or_insert(0);
                 if *sent >= max_per_dest {
                     continue; // destination exhausted for this tick
                 }
@@ -309,19 +188,19 @@ impl BrokerNode {
                         "Attempt number {} to send queued message to {} at {}",
                         msg.retry.get_attempts() + 1,
                         pubk_hash,
-                        address_str
+                        address
                     );
                 }
 
-                let attempt_to_send = self.internal_send(&address, pubk_hash, &msg.payload);
+                let attempt_to_send = self.internal_send(&address, &pubk_hash, &msg.payload);
                 if attempt_to_send.as_ref().is_ok_and(|x| *x) {
-                    self.storage.remove(&key, None)?;
+                    self.storage.remove(&key)?;
                     *sent += 1;
                 } else {
                     warn!(
                         "Failed to send queued message to {} at {}: {}",
                         pubk_hash,
-                        address_str,
+                        address,
                         attempt_to_send.as_ref().err().unwrap()
                     );
 
@@ -332,13 +211,14 @@ impl BrokerNode {
                         warn!(
                             "moving message to dead letter queue for {} at {} after {} attempts",
                             pubk_hash,
-                            address_str,
+                            address,
                             msg.retry.get_attempts()
                         );
-                        self.enqueue_deadletter_msg(&pubk_hash.to_string(), &address, &raw)?;
-                        self.storage.remove(&key, None)?;
+                        self.storage
+                            .enqueue_deadletter(&pubk_hash, &address, &raw)?;
+                        self.storage.remove(&key)?;
                     } else {
-                        self.storage.set(&key, serde_json::to_string(&msg)?, None)?;
+                        self.storage.set(&key, &serde_json::to_string(&msg)?)?;
                     }
                     *sent = max_per_dest; // stop trying to send to this destination this tick
                 }
@@ -374,24 +254,17 @@ impl BrokerNode {
     }
 
     fn process_in_queue(&self) -> Result<(), BrokerError> {
-        let tx = self.storage.begin_transaction();
+        let incoming = self.local_channel.get_all()?;
+        self.storage.store_in_msgs(&incoming)?;
 
-        let mut msg_uids = vec![];
-        for msg in self.local_channel.get_all()? {
-            msg_uids.push(msg.uid);
-            let key = self.storage_in_key(msg.uid, &msg.from);
-            self.storage.set(&key, msg.msg, Some(tx))?;
-        }
-        self.storage.commit_transaction(tx)?;
-
-        if msg_uids.len() > 0 {
+        if incoming.len() > 0 {
             info!(
                 "Moved {} messages from localchannel to inqueu",
-                msg_uids.len()
+                incoming.len()
             );
         }
-        for uid in msg_uids {
-            self.local_channel.ack(uid)?;
+        for msg in incoming {
+            self.local_channel.ack(msg.uid)?;
         }
 
         Ok(())
@@ -407,39 +280,20 @@ impl BrokerNode {
         &mut self,
         queue_type: &QueueType,
     ) -> Result<Vec<(ReceivedMessage, Option<String>)>, BrokerError> {
-        let mut storage_keys = self
-            .storage
-            .partial_compare_keys(&self.partial_compare_keys(queue_type), None)?
-            .into_iter()
-            .collect::<Vec<String>>();
-        storage_keys.sort_by_key(|key| {
-            key.split('/')
-                .nth(4) // index position
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(u64::MAX)
-        });
-
         let mut messages = vec![];
 
-        for key in storage_keys {
-            if let Some(data) = self.storage.get(&key, None)? {
-                let x: String = data;
-                let parts: Vec<&str> = key.split('/').collect();
-                if parts.len() < 7 {
-                    continue;
-                }
-                let pubk_hash = parts[5];
-
+        for key in self.storage.sorted_keys(queue_type)? {
+            if let Some(x) = self.storage.get(&key)? {
                 let (identifier, data, ctx) = match queue_type {
                     QueueType::InQueue => {
-                        let id = parts[6].parse::<u8>()?;
-                        let identifier = Identifier::new(pubk_hash.to_string(), id);
+                        let identifier = BrokerNodeStorage::sender_from_key(&key)?;
                         let data = serde_json::from_str::<Vec<u8>>(&x)?;
                         (identifier, data, None)
                     }
                     QueueType::DeadLetterQueue => {
                         // No receiver id in deadletter, use COMMS_ID as default
-                        let identifier = Identifier::new(pubk_hash.to_string(), COMMS_ID);
+                        let (pubk_hash, _) = BrokerNodeStorage::dest_from_key(&key)?;
+                        let identifier = Identifier::new(pubk_hash, COMMS_ID);
                         let msg = serde_json::from_str::<OutgoingMsg>(&x)?;
                         let data = serde_json::from_str::<Vec<u8>>(&msg.payload)?;
                         (identifier, data, Some(msg.ctx))
@@ -449,7 +303,7 @@ impl BrokerNode {
 
                 messages.push((ReceivedMessage::Msg(identifier, data), ctx));
 
-                self.storage.remove(&key, None)?;
+                self.storage.remove(&key)?;
             }
         }
 
@@ -525,6 +379,7 @@ impl BrokerNode {
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
+    use storage_backend::storage_config::StorageConfig;
     use tracing_subscriber::{
         fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
     };
@@ -548,9 +403,17 @@ mod tests {
         (allow_list, routing_table, settings)
     }
 
+    // Test storages live under target/tmp, never in the crate root or the system temp directory.
+    fn tmp_path(name: &str, port: u16) -> String {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/tmp");
+        let _ = fs::create_dir_all(&dir);
+        dir.join(format!("{}_{}", name, port))
+            .to_string_lossy()
+            .into_owned()
+    }
+
     fn get_storage(port: u16) -> Rc<Storage> {
-        let storage_path = format!("/tmp/test_storage_{}", port);
-        let config = StorageConfig::new(storage_path.clone(), None);
+        let config = StorageConfig::new(tmp_path("test_storage", port), None);
         let storage = Storage::new(&config).unwrap();
         Rc::new(storage)
     }
@@ -598,7 +461,7 @@ mod tests {
             peer1.address,
             &peer1.privk,
             peer1.storage.clone(),
-            None,
+            &tmp_path("broker_comms", peer1.address.port()),
             allow_list.clone(),
             routing_table.clone(),
             settings.clone(),
@@ -610,7 +473,7 @@ mod tests {
             peer2.address,
             &peer2.privk,
             peer2.storage.clone(),
-            None,
+            &tmp_path("broker_comms", peer2.address.port()),
             allow_list.clone(),
             routing_table.clone(),
             settings.clone(),
@@ -622,7 +485,7 @@ mod tests {
             peer3.address,
             &peer3.privk,
             peer3.storage.clone(),
-            None,
+            &tmp_path("broker_comms", peer3.address.port()),
             allow_list.clone(),
             routing_table.clone(),
             settings,
@@ -641,7 +504,7 @@ mod tests {
             selected_peer.address,
             &selected_peer.privk,
             selected_peer.storage.clone(),
-            None,
+            &tmp_path("broker_comms", selected_peer.address.port()),
             allow_list.clone(),
             routing_table.clone(),
             settings,
@@ -670,8 +533,8 @@ mod tests {
 
     fn cleanup_storage(start_port: u16, count: u16) {
         for port in start_port..start_port + count {
-            let _ = fs::remove_dir_all(&PathBuf::from(format!("/tmp/test_storage_{}", port)));
-            let _ = fs::remove_dir_all(&PathBuf::from(format!("/tmp/broker_comms_{}", port)));
+            let _ = fs::remove_dir_all(&PathBuf::from(tmp_path("test_storage", port)));
+            let _ = fs::remove_dir_all(&PathBuf::from(tmp_path("broker_comms", port)));
         }
     }
 

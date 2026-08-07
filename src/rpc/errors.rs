@@ -1,4 +1,4 @@
-use crate::{retry::RetryPolicyError, identification};
+use crate::{identification, retry::RetryPolicyError, storage};
 use bitvmx_settings::errors::ConfigError;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -33,9 +33,8 @@ pub enum BrokerError {
     #[error("Generic TLS error: {0}")]
     TlsError(String),
 
-    #[cfg(feature = "storagebackend")]
-    #[error("Storage error: {0}")]
-    StorageError(#[from] storage_backend::error::StorageError),
+    #[error("Broker storage error: {0}")]
+    BrokerStorageError(#[from] storage::BrokerStorageError),
 
     #[error("Failed to get address: {0}")]
     AddressError(#[from] std::net::AddrParseError),

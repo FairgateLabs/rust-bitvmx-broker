@@ -1,62 +1,36 @@
 use crate::{
     identification::identifier::Identifier,
-    rpc::{
-        errors::{BrokerError, MutexExt},
-        Message,
-    },
-    storage::StorageApi,
+    rpc::{errors::BrokerError, Message},
+    storage::BrokerServerStorage,
 };
-use std::sync::{Arc, Mutex};
-
-pub struct LocalChannel<S: StorageApi> {
+/// A local channel for communication between the broker and its clients.
+pub struct LocalChannel {
     my_id: Identifier, // Public key hash
-    storage: Arc<Mutex<S>>,
+    storage: BrokerServerStorage,
 }
 
-impl<S> LocalChannel<S>
-where
-    S: StorageApi,
-{
-    pub fn new(my_id: Identifier, storage: Arc<Mutex<S>>) -> Self {
+impl LocalChannel {
+    /// Only a BrokerServer can build one, so the channel always shares the storage of the
+    /// server it talks to. See BrokerServer::create_local_channel.
+    pub(crate) fn new(my_id: Identifier, storage: BrokerServerStorage) -> Self {
         Self { my_id, storage }
     }
 
-    pub fn new_simple(pubk_hash: String, storage: Arc<Mutex<S>>) -> Self {
-        let my_id = Identifier {
-            pubkey_hash: pubk_hash,
-            id: 0, // Default to 0 if not provided
-        };
-        Self::new(my_id, storage)
-    }
-
     pub fn send(&self, dest: &Identifier, msg: String) -> Result<bool, BrokerError> {
-        self.storage.lock_or_err::<BrokerError>("storage")?.insert(
-            self.my_id.clone(),
-            dest.clone(),
-            msg,
-        )?;
+        self.storage.insert(self.my_id.clone(), dest.clone(), msg)?;
         Ok(true)
     }
 
     pub fn get(&self) -> Result<Option<Message>, BrokerError> {
-        Ok(self
-            .storage
-            .lock_or_err::<BrokerError>("storage")?
-            .get(self.my_id.clone())?)
+        Ok(self.storage.get(self.my_id.clone())?)
     }
 
     pub fn get_all(&self) -> Result<Vec<Message>, BrokerError> {
-        Ok(self
-            .storage
-            .lock_or_err::<BrokerError>("storage")?
-            .get_all(self.my_id.clone())?)
+        Ok(self.storage.get_all(self.my_id.clone())?)
     }
 
     pub fn ack(&self, uid: u64) -> Result<bool, BrokerError> {
-        Ok(self
-            .storage
-            .lock_or_err::<BrokerError>("storage")?
-            .remove(self.my_id.clone(), uid)?)
+        Ok(self.storage.remove(self.my_id.clone(), uid)?)
     }
 
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, BrokerError> {
