@@ -9,13 +9,13 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+pub(crate) mod api_impl;
 pub mod client;
 pub mod client_async;
 pub mod config;
 pub mod errors;
 pub mod rate_limiter;
 pub mod server;
-pub mod service;
 pub mod tls_helper;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
