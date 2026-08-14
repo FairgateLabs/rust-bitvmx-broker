@@ -250,6 +250,17 @@ impl BrokerNode {
         }
         Ok(())
     }
+    /// Exposes the channel to send messages to another component on this broker. Only available on a node
+    ///  created with [`BrokerNode::new_services`]. Do not use this to send messages to the node's own local_id
+    pub fn create_local_channel(&self, id: Identifier) -> Result<LocalChannel, BrokerError> {
+        self.require_mode(NodeMode::Services)?;
+        if id == self.local_id {
+            return Err(BrokerError::Other(
+                "Cannot create a local channel to the node's own local_id".to_string(),
+            ));
+        }
+        Ok(self.server.create_local_channel(id))
+    }
 
     fn enqueue_out_msg(
         &self,
