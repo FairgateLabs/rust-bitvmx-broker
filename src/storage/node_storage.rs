@@ -93,8 +93,12 @@ impl BrokerNodeStorage {
         Ok(Identifier::new(pubk_hash.to_string(), id))
     }
 
-    // Keys of a queue ordered by the uid embedded in the key.
-    pub fn sorted_keys(&self, queue: &QueueType) -> Result<Vec<String>, BrokerStorageError> {
+    // Keys of a queue ordered by the uid embedded in the key. At most max of them when given (the oldest ones).
+    pub fn sorted_keys(
+        &self,
+        queue: &QueueType,
+        max: Option<usize>,
+    ) -> Result<Vec<String>, BrokerStorageError> {
         let mut keys = self
             .storage
             .partial_compare_keys(&self.msgs_prefix(queue), None)?;
@@ -104,6 +108,9 @@ impl BrokerNodeStorage {
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(u64::MAX)
         });
+        if let Some(max) = max {
+            keys.truncate(max);
+        }
         Ok(keys)
     }
 

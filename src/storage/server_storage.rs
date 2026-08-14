@@ -66,14 +66,12 @@ impl BrokerServerStorage {
     // Messages waiting for dest, oldest first.
     pub fn get_all(&self, dest: Identifier) -> Result<Vec<Message>, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
-        let mut keys = storage
-            .partial_compare_keys(&Self::msgs_prefix(&dest), None)
-            .unwrap_or(vec![]);
+        let mut keys = storage.partial_compare_keys(&Self::msgs_prefix(&dest), None)?;
         keys.sort();
 
         let mut messages = Vec::new();
         for key in keys {
-            if let Some(msg) = storage.get(&key, None).unwrap_or(None) {
+            if let Some(msg) = storage.get(&key, None)? {
                 let (uid, from) = Self::decode_key(&key)?;
                 messages.push(Message { uid, from, msg });
             }
@@ -84,13 +82,25 @@ impl BrokerServerStorage {
     pub fn remove(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
         let prefix = format!("{}{}", Self::msgs_prefix(&dest), format_uid(uid));
-        let keys = storage
-            .partial_compare_keys(&prefix, None)
-            .unwrap_or(vec![]);
+        let keys = storage.partial_compare_keys(&prefix, None)?;
         if keys.len() != 1 {
+            // No such message stored for this destination. Reached when the uid was already
+            // acknowledged, when it never existed, or when it belongs to another destination. None of
+            // those is an error, so the caller is told the message was not there instead of failing.
             return Ok(false);
         }
-        Ok(storage.remove(&keys[0], None).is_ok())
+
+        let tx = storage.begin_transaction();
+        match storage.remove(&keys[0], Some(tx)) {
+            Ok(()) => {
+                storage.commit_transaction(tx)?;
+                Ok(true)
+            }
+            Err(e) => {
+                let _ = storage.rollback_transaction(tx);
+                Err(e.into())
+            }
+        }
     }
 
     pub fn insert(
@@ -101,10 +111,20 @@ impl BrokerServerStorage {
     ) -> Result<(), BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
 
-        let uid: u64 = storage.get(UID_KEY, None).unwrap_or(None).unwrap_or(0) + 1;
+        let uid: u64 = storage.get(UID_KEY, None)?.unwrap_or(0) + 1;
 
-        let _ = storage.set(UID_KEY, uid, None);
-        let _ = storage.set(&Self::msg_key(&dest, uid, &from), msg, None);
-        Ok(())
+        // The new uid and the message it names are written together.
+        let tx = storage.begin_transaction();
+        let written = storage
+            .set(UID_KEY, uid, Some(tx))
+            .and_then(|_| storage.set(&Self::msg_key(&dest, uid, &from), msg, Some(tx)));
+
+        match written {
+            Ok(()) => Ok(storage.commit_transaction(tx)?),
+            Err(e) => {
+                let _ = storage.rollback_transaction(tx);
+                Err(e.into())
+            }
+        }
     }
 }

@@ -75,6 +75,9 @@ pub enum BrokerError {
     #[error("Expected ctx {}, but got {}", expected, got)]
     InvalidMessageContext { expected: String, got: String },
 
+    #[error("Operation not available on a node built in {0} mode")]
+    WrongNodeMode(String),
+
     #[error("Time error: {0}")]
     TimeError(#[from] std::time::SystemTimeError),
 

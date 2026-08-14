@@ -102,10 +102,14 @@ fn main() -> anyhow::Result<()> {
                     let from_ident = Identifier::new(from.pubkey_hash.clone(), from_id);
                     let to_ident = Identifier::new(to.pubkey_hash.clone(), to_id);
 
-                    routing_table
+                    if let Err(e) = routing_table
                         .lock()
                         .unwrap()
-                        .add_route(from_ident, to_ident, wild_card);
+                        .add_route(from_ident, to_ident, wild_card)
+                    {
+                        println!("Could not add route: {}", e);
+                        continue;
+                    }
 
                     println!("Added route {} -> {}", from_str, to_str);
                 } else {

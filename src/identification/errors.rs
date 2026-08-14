@@ -14,6 +14,9 @@ pub enum IdentificationError {
     #[error("Invalid routing line: {0}")]
     InvalidRoutingLine(String),
 
+    #[error("Routes can only be edited while the routing table is in table mode")]
+    NotInTableMode,
+
     //std::string::String
     #[error("Failed to parse identifier: {0}")]
     InvalidIdentifier(String),

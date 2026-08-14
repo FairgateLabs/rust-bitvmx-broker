@@ -158,6 +158,18 @@ fn route_all() -> Arc<Mutex<RoutingTable>> {
     routing
 }
 
+// The channels keep get and ack apart so the caller decides when a message is really gone.
+// Tests do not need that control, so they take both steps at once.
+fn recv_and_ack(channel: &RemoteChannel) -> Result<Option<(String, Identifier)>, BrokerError> {
+    match channel.get()? {
+        Some(msg) => {
+            channel.ack(msg.uid)?;
+            Ok(Some((msg.msg, msg.from)))
+        }
+        None => Ok(None),
+    }
+}
+
 fn get_keys(port: u16) -> (KeyPair, KeyPair, KeyPair) {
     let privk1 = "b'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDhzkbFynswfys/\nVNbM4hzYNKCdAuxYI/jysOPkRHGhlJe+71EE9F2CpAZnjevBsUWxi3+LatfMZjwi\nUz/l3iC6ow8Dsar0BO6RmWQR8Uf/1sx+WNjBk2woISPb60oXbXYj8AVUqYUUSo/Q\nRF5kuGT7dsMvUAx8Irn93w4A5VXx+FLn3r38Tymv7qOMT5cO1xrNStsluBD1RdPj\nz+B6b+7woAKqkrNFR+ZH0HUUKldA+A+pGElQLODyLB7OwxHgKtEsFdyiiDuKW2mP\nsk2dsab9HCNdo9cViA9UbeykDXq7h0/7gYg9XBH8LqqXYpSk/LE6T8k1RVa9EBxV\nRpYqlvFPAgMBAAECggEAV64pfRQq0aIPwP/IiLYkTS/iThWcgH03ZcWaOED7fqqc\nYd+7rhjVVq0qb3uEWCnlzhNE63YJZa0tHIcHANNIEjDO27hZkXd4y8CsQutV8doO\nfeEyCbic/tgffH3Yv1AZ18qTx1QsAL0TKuPhY2rWi26KTAzhTDKP1iyO23ox7Uqs\nwWChuHWyw7SmECRmjKOjTLs1Axea3fos6ERgEv/KZiTi+a9he5JuHOXO6aKTvHI7\nlTAMdloy1CnK6G3Ql7LfBeX20hIwDSZNgp5naB6NjJiDTbxxlGj7apW6hquzJpRP\n1Tn2YLvVKl5bdAOHh44wHBhZR9COjxUT+uASYRb5wQKBgQD7FTe3VPrsi6ejo7db\n9SwTUjsTQKoxrfoNc0xPzGGwKyyArGM++NQI1CZuQQDXVoYl+JC1JOcTLjjW/TYu\nwVGAr63bjtYjU0e8NZzum3nIZ7rpyHJpnbCLBc678KNCvblD4u/Vl1bx/9vRiCTx\n9S0r/LJ54Jr3Ohx9feYERc4K/QKBgQDmOlWNHwFlC2pkYI/0biXWybQZWvz+C5x3\nJO6tf0ykRk2sBEcp07JMhJsE+r4B+lHNSWalkX409Fn6x2ch/6tLP0X+viM5nr+2\nRpGHLpUBeq4+RKMmUS/NgY2DoRV1DRnfk4Vt0BZy5Voc4OVQz0zohwFzYhY60ThR\nV3UJ9HbdOwKBgQCcBS8+CNxzqMRe9xi1V8AvsWVsLT6U6Fr9iKve2k3JvspEmtqB\nAvYfFlVbJaF0Lhvl9HNXXLsKPCqtzWKh4xbWNFSAnl2KTfHBjj8aNhqS4YJQS3Jt\nFsPhX5Z7SqjojCRXfukxfH1Wm3ro1QTAJW4Qa1IsUdl5zu5tPJJ2DTpfsQKBgCii\nXR0mPsnFxQZoYKAEnNsXCJl9DLAN/pSsyQ+IK0/HNMhKjQDd41dMBExRsR2KP8va\ny6onTr4r7oGrlhFTHbmPNlxq1K7DzRRvyhmw6A21yHEnDiCiLay40/BKiw34vPtP\n/znNg1jOECSOsQqdO/bCdUgXJNNGwAjjRb33Ds+nAoGAW76wLk1lwD2tZ8KgMRUU\ni0BkY7eDXPskxCP6BjFq10J/1dC/dsLO9mZfwl2BJ2D+gGmcIzdSb5p1LkuniGuv\nV+/lSa8bdUKwtd5l+CZ0OMqmHryQZICqGeG5uREYv5eqs4mDiuM8QkZdOZUKWzPc\nwWJXrp5cQtvgjS/HyjHB69o=\n-----END PRIVATE KEY-----\n'";
     let privk2 = "b'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCeJYILLK2EpGP9\nCrlEeHL1hYODftAUxJTacRezNNuyAqqP04H0IFffXhdz/f54HnYnaN1VrMGNQlR5\nBashFjZa7fVEFp3osVgNEPNu63MA1Gr7o4BakopRbMx7jUyhmlJXNP3VX5tZEha+\nV7GOZEeh2Ej3pehnE/E6SD16Ez9aaGydFgrMALHjT2NfucK0XCcDvMbq53PsBaLm\nnH5TLnvtZvYmdyDoUe+RvlwaRAHv4AWDOElhQrj970giHWY6i9QgqrlTIYN5cQrD\nM6kNj1SaBtCNpG/wIK3NMLW7PAYeEKTopwdsFuVL+1e0IAsTIVpDC1mb3r2GlPji\n0GaMLBAHAgMBAAECggEAFPHDvMYgfuIkqeULL1HCa9jQV5Bqb22vhxSWPnIgLH2k\n6CJrYhEMgjUcZwy68F6caFC/i3KzOYmQ1WxWQy4Fadp88pUKOcCO+EAH9WcyVmhL\neOMpAxXIQstlc3F9tiNRh2IpweIFGXFHWNMVXVXTlNAnrcCnvEsMVhsuJSY6bDcV\n5ejQKE8kM8F30FzD2mii36XamsreMpQBAIlm0i1HH/8PpynUQ12bb2M0T/FR9C5V\nAbfeLUOgrzWgBs9hxmlBzILusJFjv7OvwIkF97GgoAyLKqFmxzncwQUTqh9iH2Js\nemN6Qg+vPIg2Et8Ku9XEX+CSXvDwFckB2Z14jqQw8QKBgQDPHDzAFDSTl+aPH+vd\n01wxtaFyP7KP2OaRabW1qzTPww87agbN3wPJqBBf9lEjVeGNjLrp2NyHX6Wfnt5V\nlpeWts13/M43rju2JJwOrfZnwJsJgQ9ZEQw30e1LWeiGpr0kcWlv2059tEiKgBwY\nNlw6evsCyFjrIuSqgg3riO9xMQKBgQDDel5TfTJ3BJZlgFYnU1YxUZDQ1mcMDnSK\ntdRLdpVWTEkjzf0a6rGJYla0NoqQdH9qDfimVMY6+RQLZVdhhXDVnQuwV0CK9ERY\nQWy/PEoPvIagTXgKJ8fKLYcG420fJJtPmTSEoPZg1PXtuABNj/68bI7ONL5CY6gO\n8iFJU0sGtwKBgA6mlLWRuFZofGrLe0fp16+8hXsrflomocjPjYcYYVgBGGa/jVOq\n3v244c+oAP1a6eW1etNn/9GjtnegKWIskPScYdSHEZ9mt9qepFt1euTD/zOg6ZEH\nX7HjK8IUzhoYWXDmhOrgvKCvzCHgBhzAW63XXUJJIeEgSsS1Bn8O5MFBAoGAMuiv\noDa+6dg8AvtFdMBzdiyz9m+gLrelCmsIew7LHcqIUdbX0CbHTexagFykAbMVa91v\noIH7jmhIHB+sfi1ukXNxE9/lY0rycbm4RKXC9A45UY5bcOmjUrhArj6UsMOr3zMb\nRl9VSyqrUdnV2l1iDliHaJS76DZkEmBk4t/abkkCgYEAxkk3skKgRJPt2bFLzdHV\n3Au24P/Cyqf1LIfXpuJcMBfAhw55g6DOLR4O0BH+s7cZk8hrGVeI9WyhC5EgzZrF\nBjTlZFqFtsz5psj1oNqgr/JnO2fL3csxbDR81q9uSSzdlN7BlzBpdQahi53K9MHi\nZDNGUy5a/PopNnWSzfHYUas=\n-----END PRIVATE KEY-----\n'";
@@ -216,7 +228,7 @@ fn test_channel() {
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = user2.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
     broker_server.close();
@@ -392,7 +404,7 @@ fn test_stress_channel() {
         let mut ok = false;
 
         while !ok {
-            let try_recv = user2.recv();
+            let try_recv = recv_and_ack(&user2);
             if try_recv.is_err() {
                 println!("Error: {:?}", try_recv);
             }
@@ -428,7 +440,7 @@ fn test_dinamic_allow_list() {
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = user2.recv().unwrap_err();
+    let msg = recv_and_ack(&user2).unwrap_err();
     assert!(matches!(msg, BrokerError::RpcError(RpcError::Channel(_))));
 
     allow_list
@@ -438,7 +450,7 @@ fn test_dinamic_allow_list() {
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = user2.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
 
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
@@ -479,7 +491,7 @@ fn test_local_service_id() {
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = user2.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
 
@@ -499,16 +511,24 @@ fn test_routing() {
         client2.get_identifier(),
     ]);
     let routing = RoutingTable::new();
-    routing.lock().unwrap().add_route(
-        client2.get_identifier(),
-        client1.get_identifier(),
-        WildCard::No,
-    );
-    routing.lock().unwrap().add_route(
-        client2.get_identifier(),
-        client1.get_identifier(),
-        WildCard::To,
-    ); // Wildcard
+    routing
+        .lock()
+        .unwrap()
+        .add_route(
+            client2.get_identifier(),
+            client1.get_identifier(),
+            WildCard::No,
+        )
+        .unwrap();
+    routing
+        .lock()
+        .unwrap()
+        .add_route(
+            client2.get_identifier(),
+            client1.get_identifier(),
+            WildCard::To,
+        )
+        .unwrap(); // Wildcard
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
@@ -518,18 +538,22 @@ fn test_routing() {
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    assert!(user2.recv().unwrap().is_none());
+    assert!(recv_and_ack(&user2).unwrap().is_none());
 
     // Now we add a route from client1 to client2, so the message should be delivered
-    routing.lock().unwrap().add_route(
-        client1.get_identifier(),
-        client2.get_identifier(),
-        WildCard::No,
-    );
+    routing
+        .lock()
+        .unwrap()
+        .add_route(
+            client1.get_identifier(),
+            client2.get_identifier(),
+            WildCard::No,
+        )
+        .unwrap();
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = user2.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
 
@@ -548,6 +572,58 @@ fn test_routing() {
 }
 
 #[test]
+fn test_routing_allow_only_to() {
+    let port = 10037;
+    cleanup_storage(port, 3);
+    let (server, client1, client2) = get_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+
+    // Only mail addressed to client1 is accepted, no matter who sends it.
+    let routing = RoutingTable::new();
+    routing
+        .lock()
+        .unwrap()
+        .allow_only_to(&client1.get_identifier());
+
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), routing.clone());
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+
+    // Addressed to client1, so it goes through even though no route was ever added.
+    user2
+        .send(&client1.get_identifier(), "Hello!".to_string())
+        .unwrap();
+    let msg = recv_and_ack(&user1).unwrap().unwrap();
+    assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, client2.get_identifier());
+
+    // Addressed to client2, which this broker never reads, so it is refused at the door.
+    user1
+        .send(&client2.get_identifier(), "Hello!".to_string())
+        .unwrap();
+    assert!(recv_and_ack(&user2).unwrap().is_none());
+
+    // The mode survives a round trip through the file.
+    routing
+        .lock()
+        .unwrap()
+        .save_to_file("routing_only_to.yaml")
+        .unwrap();
+    let loaded = RoutingTable::from_file("routing_only_to.yaml").unwrap();
+    std::fs::remove_file("routing_only_to.yaml").unwrap();
+    assert_eq!(*loaded.lock().unwrap(), *routing.lock().unwrap());
+
+    broker_server.close();
+    drop(broker_server);
+    cleanup_storage(port, 3);
+}
+
+#[test]
 fn test_integration() {
     let port = 10021;
     cleanup_storage(port, 4);
@@ -559,20 +635,32 @@ fn test_integration() {
         client3.get_identifier(),
     ]);
     let routing = RoutingTable::new();
-    routing.lock().unwrap().add_route(
-        client1.get_identifier(),
-        client3.get_identifier(),
-        WildCard::To, // Wildcard (client2 and client3 have the same pubkey_hash)
-    );
-    routing.lock().unwrap().add_routes(
-        client2.get_identifier(),
-        vec![client1.get_identifier(), client3.get_identifier()],
-    );
-    routing.lock().unwrap().add_route(
-        client3.get_identifier(),
-        client1.get_identifier(),
-        WildCard::No,
-    );
+    routing
+        .lock()
+        .unwrap()
+        .add_route(
+            client1.get_identifier(),
+            client3.get_identifier(),
+            WildCard::To, // Wildcard (client2 and client3 have the same pubkey_hash)
+        )
+        .unwrap();
+    routing
+        .lock()
+        .unwrap()
+        .add_routes(
+            client2.get_identifier(),
+            vec![client1.get_identifier(), client3.get_identifier()],
+        )
+        .unwrap();
+    routing
+        .lock()
+        .unwrap()
+        .add_route(
+            client3.get_identifier(),
+            client1.get_identifier(),
+            WildCard::No,
+        )
+        .unwrap();
     // Not client3 to client2, so it should not be able to send messages to client2
 
     let (mut broker_server, _) =
@@ -603,7 +691,7 @@ fn test_integration() {
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = user2.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1.get_identifier());
 
@@ -611,7 +699,7 @@ fn test_integration() {
     user3
         .send(&client1.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
-    let msg = user1.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user1).unwrap().unwrap();
     assert_eq!(msg.0, "Hello from client3!");
     assert_eq!(msg.1, client3.get_identifier());
 
@@ -619,7 +707,7 @@ fn test_integration() {
     user3
         .send(&client2.get_identifier(), "Hello from client3!".to_string())
         .unwrap();
-    assert!(user2.recv().unwrap().is_none());
+    assert!(recv_and_ack(&user2).unwrap().is_none());
 
     broker_server.close();
     drop(broker_server);
@@ -643,7 +731,7 @@ fn test_simple_channel() {
     let (user2, client2) = RemoteChannel::new_simple(&server_config, 0).unwrap();
 
     user1.send(&client2, "Hello!".to_string()).unwrap();
-    let msg = user2.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client1);
     broker_server.close();
@@ -684,8 +772,8 @@ fn test_multiple_servers() {
             "Hello from server2!".to_string(),
         )
         .unwrap();
-    let msg = user2.recv().unwrap().unwrap();
-    let msg2 = user4.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
+    let msg2 = recv_and_ack(&user4).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(msg.1, client11.get_identifier());
     assert_eq!(msg2.0, "Hello from server2!");
@@ -714,7 +802,7 @@ fn test_local_channel() {
     local_channel
         .send(&client1.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = user1.recv().unwrap().unwrap();
+    let msg = recv_and_ack(&user1).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
     assert_eq!(
         msg.1,
@@ -924,11 +1012,15 @@ fn test_readme_example() {
         )
         .unwrap();
     // Add routing for clients
-    routing_table.lock().unwrap().add_route(
-        client1_identifier.clone(),
-        client2_identifier.clone(),
-        WildCard::No,
-    );
+    routing_table
+        .lock()
+        .unwrap()
+        .add_route(
+            client1_identifier.clone(),
+            client2_identifier.clone(),
+            WildCard::No,
+        )
+        .unwrap();
 
     let destination_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
 
