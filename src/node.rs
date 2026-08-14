@@ -250,6 +250,7 @@ impl BrokerNode {
         }
         Ok(())
     }
+    /// This method is only necessary for e2e testing. Could be hidden with a feature-flag and activated only as dev-dependency.
     /// Exposes the channel to send messages to another component on this broker. Only available on a node
     ///  created with [`BrokerNode::new_services`]. Do not use this to send messages to the node's own local_id
     pub fn create_local_channel(&self, id: Identifier) -> Result<LocalChannel, BrokerError> {
