@@ -12,25 +12,46 @@ use tokio::runtime::Runtime;
 use tracing::{info, warn};
 
 use crate::{
-    storage::{BrokerNodeStorage, QueueType},
     channel::local::LocalChannel,
-    retry::{now_ms, RetryPolicy, RetryState},
     identification::{
         allow_list::AllowList,
         identifier::{Identifier, PubkHash},
         routing::RoutingTable,
     },
+    retry::{now_ms, RetryPolicy, RetryState},
     rpc::{
-        config::BrokerSettings, errors::BrokerError, client::BrokerClient,
-        server::BrokerServer, tls_helper::Cert, BrokerConfig,
+        client::BrokerClient,
+        config::BrokerSettings,
+        errors::{BrokerError, MutexExt},
+        server::BrokerServer,
+        tls_helper::Cert,
+        BrokerConfig,
     },
     settings::COMMS_ID,
+    storage::{BrokerNodeStorage, QueueType},
 };
 
 #[derive(Debug)]
 pub enum ReceivedMessage {
-    Msg(Identifier, Vec<u8>), //Id, Msg
+    Msg(Identifier, String), //Id, Msg
     Error(BrokerError),
+}
+
+// What the node was built for. Peers talk to other brokers over the network, services hand messages
+// to components that share this process. Only the constructors and send differ, the rest is common.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeMode {
+    Peers,
+    Services,
+}
+
+impl NodeMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            NodeMode::Peers => "peers",
+            NodeMode::Services => "services",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,20 +72,25 @@ pub struct BrokerNode {
     retry_policy: RetryPolicy,
     rt: Arc<Mutex<Runtime>>,
     broker_settings: BrokerSettings,
+    local_id: Identifier, // Which of the destinations the server holds messages for (own for Peers, chosen for Services)
+    mode: NodeMode,
 }
 
 impl BrokerNode {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    fn new(
         name: &str,
         address: SocketAddr,
-        privk: &str,
+        server_privk: &str,
         storage: Rc<Storage>,
         server_storage_path: &str,
         allow_list: Arc<Mutex<AllowList>>,
         routing_table: Arc<Mutex<RoutingTable>>,
+        local_id: Identifier,
+        mode: NodeMode,
         broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
-        let cert = Cert::new_with_privk(privk)?;
+        let cert = Cert::new_with_privk(server_privk)?;
         let pubk_hash = cert.get_pubk_hash()?;
         let broker_config = BrokerConfig::new(
             address.port(),
@@ -81,10 +107,7 @@ impl BrokerNode {
             routing_table.clone(),
         )?;
 
-        let local_channel = server.create_local_channel(Identifier {
-            pubkey_hash: pubk_hash.clone(),
-            id: COMMS_ID,
-        });
+        let local_channel = server.create_local_channel(local_id.clone());
 
         let retry_policy = RetryPolicy::new(&broker_settings.broker_node_config)?;
 
@@ -101,32 +124,143 @@ impl BrokerNode {
             retry_policy,
             rt,
             broker_settings,
+            local_id,
+            mode,
         })
     }
 
-    pub fn new_with_paths(
+    /// A node that exchanges messages with other brokers over the network.
+    /// It accepts only messages addressed to its local_id.
+    pub fn new_peers(
         name: &str,
         address: SocketAddr,
-        privk: &str, //File with PEM format
+        server_privk: &str,
         storage: Rc<Storage>,
         server_storage_path: &str,
-        allow_list: &str,
-        routing_table: &str,
+        allow_list: Arc<Mutex<AllowList>>,
         broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
-        let allow_list = AllowList::from_file(allow_list)?;
-        let routing_table = RoutingTable::from_file(routing_table)?;
-        let privk = settings::decrypt_or_read_file(privk)?;
+        let local_id = Identifier {
+            pubkey_hash: Cert::new_with_privk(server_privk)?.get_pubk_hash()?,
+            id: COMMS_ID,
+        };
+
+        let routing_table = RoutingTable::new();
+        routing_table
+            .lock_or_err::<BrokerError>("routing_table")?
+            .allow_only_to(&local_id);
+
         Self::new(
             name,
             address,
-            &privk,
+            server_privk,
             storage,
             server_storage_path,
             allow_list,
             routing_table,
+            local_id,
+            NodeMode::Peers,
             broker_settings,
         )
+    }
+
+    pub fn new_peers_with_paths(
+        name: &str,
+        address: SocketAddr,
+        server_privk: &str, //File with PEM format
+        storage: Rc<Storage>,
+        server_storage_path: &str,
+        allow_list: &str,
+        broker_settings: BrokerSettings,
+    ) -> Result<Self, BrokerError> {
+        let allow_list = AllowList::from_file(allow_list)?;
+        let server_privk = settings::decrypt_or_read_file(server_privk)?;
+        Self::new_peers(
+            name,
+            address,
+            &server_privk,
+            storage,
+            server_storage_path,
+            allow_list,
+            broker_settings,
+        )
+    }
+
+    /// A node that serves several components, each holding its own destination on one server.
+    /// Its server holds a destination per component. The local_id indicates which of them this
+    /// node reads and which one it stamps as the sender.
+    /// The routing table that decides who may write to whom.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_services(
+        name: &str,
+        address: SocketAddr,
+        server_privk: &str,
+        storage: Rc<Storage>,
+        server_storage_path: &str,
+        allow_list: Arc<Mutex<AllowList>>,
+        routing_table: Arc<Mutex<RoutingTable>>,
+        local_id: Identifier,
+        broker_settings: BrokerSettings,
+    ) -> Result<Self, BrokerError> {
+        Self::new(
+            name,
+            address,
+            server_privk,
+            storage,
+            server_storage_path,
+            allow_list,
+            routing_table,
+            local_id,
+            NodeMode::Services,
+            broker_settings,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_services_with_paths(
+        name: &str,
+        address: SocketAddr,
+        server_privk: &str, //File with PEM format
+        storage: Rc<Storage>,
+        server_storage_path: &str,
+        allow_list: &str,
+        routing_table: &str,
+        local_id: Identifier,
+        broker_settings: BrokerSettings,
+    ) -> Result<Self, BrokerError> {
+        let allow_list = AllowList::from_file(allow_list)?;
+        let routing_table = RoutingTable::from_file(routing_table)?;
+        let server_privk = settings::decrypt_or_read_file(server_privk)?;
+        Self::new_services(
+            name,
+            address,
+            &server_privk,
+            storage,
+            server_storage_path,
+            allow_list,
+            routing_table,
+            local_id,
+            broker_settings,
+        )
+    }
+
+    fn require_mode(&self, mode: NodeMode) -> Result<(), BrokerError> {
+        if self.mode != mode {
+            return Err(BrokerError::WrongNodeMode(self.mode.as_str().to_string()));
+        }
+        Ok(())
+    }
+    /// This method is only necessary for e2e testing. Could be hidden with a feature-flag and activated only as dev-dependency.
+    /// Exposes the channel to send messages to another component on this broker. Only available on a node
+    ///  created with [`BrokerNode::new_services`]. Do not use this to send messages to the node's own local_id
+    pub fn create_local_channel(&self, id: Identifier) -> Result<LocalChannel, BrokerError> {
+        self.require_mode(NodeMode::Services)?;
+        if id == self.local_id {
+            return Err(BrokerError::Other(
+                "Cannot create a local channel to the node's own local_id".to_string(),
+            ));
+        }
+        Ok(self.server.create_local_channel(id))
     }
 
     fn enqueue_out_msg(
@@ -134,10 +268,10 @@ impl BrokerNode {
         ctx: &str,
         pubk_hash: &PubkHash,
         address: &SocketAddr,
-        data: Vec<u8>,
+        data: String,
     ) -> Result<(), BrokerError> {
         let msg = OutgoingMsg {
-            payload: serde_json::to_string(&data)?,
+            payload: data,
             ctx: ctx.to_string(),
             retry: RetryState::new(now_ms()?), // Initial attempt
         };
@@ -148,15 +282,25 @@ impl BrokerNode {
         Ok(())
     }
 
-    pub fn send(
+    /// Queue a message for another broker. The out queue is drained by `tick`.
+    /// This can only be called on a node created with [`BrokerNode::new_peers`],
+    pub fn send_peer(
         &self,
         ctx: &str,
         pubk_hash: &PubkHash,
         address: SocketAddr,
-        data: Vec<u8>,
+        data: String,
     ) -> Result<(), BrokerError> {
+        self.require_mode(NodeMode::Peers)?;
         self.enqueue_out_msg(ctx, pubk_hash, &address, data)?;
         Ok(())
+    }
+
+    /// Hand a message to another component on this broker.
+    /// This can only be called on a node created with [`BrokerNode::new_services`],
+    pub fn send_service(&self, dest: &Identifier, data: String) -> Result<(), BrokerError> {
+        self.require_mode(NodeMode::Services)?;
+        self.local_channel.send(dest, data)
     }
 
     fn process_out_queue(&self) -> Result<(), BrokerError> {
@@ -169,7 +313,7 @@ impl BrokerNode {
         ); // use 50% of capacity
         let now = now_ms()?;
 
-        for key in self.storage.sorted_keys(&QueueType::OutQueue)? {
+        for key in self.storage.sorted_keys(&QueueType::OutQueue, None)? {
             if let Some(raw) = self.storage.get(&key)? {
                 let (pubk_hash, address) = BrokerNodeStorage::dest_from_key(&key)?;
 
@@ -259,7 +403,7 @@ impl BrokerNode {
 
         if incoming.len() > 0 {
             info!(
-                "Moved {} messages from localchannel to inqueu",
+                "Moved {} messages from localchannel to inqueue",
                 incoming.len()
             );
         }
@@ -279,24 +423,23 @@ impl BrokerNode {
     fn check_reception(
         &mut self,
         queue_type: &QueueType,
+        max: Option<usize>,
     ) -> Result<Vec<(ReceivedMessage, Option<String>)>, BrokerError> {
         let mut messages = vec![];
 
-        for key in self.storage.sorted_keys(queue_type)? {
+        for key in self.storage.sorted_keys(queue_type, max)? {
             if let Some(x) = self.storage.get(&key)? {
                 let (identifier, data, ctx) = match queue_type {
                     QueueType::InQueue => {
                         let identifier = BrokerNodeStorage::sender_from_key(&key)?;
-                        let data = serde_json::from_str::<Vec<u8>>(&x)?;
-                        (identifier, data, None)
+                        (identifier, x, None)
                     }
                     QueueType::DeadLetterQueue => {
                         // No receiver id in deadletter, use COMMS_ID as default
                         let (pubk_hash, _) = BrokerNodeStorage::dest_from_key(&key)?;
                         let identifier = Identifier::new(pubk_hash, COMMS_ID);
                         let msg = serde_json::from_str::<OutgoingMsg>(&x)?;
-                        let data = serde_json::from_str::<Vec<u8>>(&msg.payload)?;
-                        (identifier, data, Some(msg.ctx))
+                        (identifier, msg.payload, Some(msg.ctx))
                     }
                     _ => continue,
                 };
@@ -310,8 +453,12 @@ impl BrokerNode {
         Ok(messages)
     }
 
-    pub fn check_receive(&mut self) -> Result<Vec<ReceivedMessage>, BrokerError> {
-        self.check_reception(&QueueType::InQueue)?
+    /// Returns the messages in the in queue, at most max of them, oldest first. None takes everything waiting.
+    pub fn check_receive(
+        &mut self,
+        max: Option<usize>,
+    ) -> Result<Vec<ReceivedMessage>, BrokerError> {
+        self.check_reception(&QueueType::InQueue, max)?
             .into_iter()
             .map(|(channel, err)| {
                 if let Some(err) = err {
@@ -326,11 +473,12 @@ impl BrokerNode {
             .collect()
     }
 
-    // Returns messages in dead letter queue with their corresponding context
+    /// Returns messages in dead letter queue with their corresponding context, at most max of them.
     pub fn check_deadletter(
         &mut self,
+        max: Option<usize>,
     ) -> Result<Vec<(ReceivedMessage, String)>, BrokerError> {
-        self.check_reception(&QueueType::DeadLetterQueue)?
+        self.check_reception(&QueueType::DeadLetterQueue, max)?
             .into_iter()
             .map(|(channel, err)| {
                 if let Some(err) = err {
@@ -345,9 +493,15 @@ impl BrokerNode {
             .collect()
     }
 
+    /// Hash of the certificate this node presents, which is how a remote peer addresses its server.
     pub fn get_pubk_hash(&self) -> Result<PubkHash, BrokerError> {
         let pubk_hash = self.cert.get_pubk_hash()?;
         Ok(pubk_hash)
+    }
+
+    /// The destination this node reads messages for, and the sender it stamps on what it sends.
+    pub fn get_local_id(&self) -> Identifier {
+        self.local_id.clone()
     }
 
     pub fn get_address(&self) -> SocketAddr {
@@ -378,6 +532,7 @@ impl BrokerNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::remote::RemoteChannel;
     use std::{fs, path::PathBuf};
     use storage_backend::storage_config::StorageConfig;
     use tracing_subscriber::{
@@ -453,41 +608,38 @@ mod tests {
     }
 
     fn get_broker_nodes(port: u16) -> (BrokerNode, BrokerNode, BrokerNode) {
-        let (allow_list, routing_table, settings) = get_allow_routing_settings();
+        let (allow_list, _, settings) = get_allow_routing_settings();
         let (peer1, peer2, peer3) = get_peers_info(port);
 
-        let broker_node1 = BrokerNode::new(
+        let broker_node1 = BrokerNode::new_peers(
             "testqueue",
             peer1.address,
             &peer1.privk,
             peer1.storage.clone(),
             &tmp_path("broker_comms", peer1.address.port()),
             allow_list.clone(),
-            routing_table.clone(),
             settings.clone(),
         )
         .unwrap();
 
-        let broker_node2 = BrokerNode::new(
+        let broker_node2 = BrokerNode::new_peers(
             "testqueue",
             peer2.address,
             &peer2.privk,
             peer2.storage.clone(),
             &tmp_path("broker_comms", peer2.address.port()),
             allow_list.clone(),
-            routing_table.clone(),
             settings.clone(),
         )
         .unwrap();
 
-        let broker_node3 = BrokerNode::new(
+        let broker_node3 = BrokerNode::new_peers(
             "testqueue",
             peer3.address,
             &peer3.privk,
             peer3.storage.clone(),
             &tmp_path("broker_comms", peer3.address.port()),
             allow_list.clone(),
-            routing_table.clone(),
             settings,
         )
         .unwrap();
@@ -495,18 +647,34 @@ mod tests {
         (broker_node1, broker_node2, broker_node3)
     }
 
+    fn get_service_node(port: u16, local_id: &Identifier) -> BrokerNode {
+        let (allow_list, routing_table, settings) = get_allow_routing_settings();
+        let peer = PeerInfo::new(PRIVK1, port);
+        BrokerNode::new_services(
+            "testservices",
+            peer.address,
+            &peer.privk,
+            peer.storage.clone(),
+            &tmp_path("broker_comms", peer.address.port()),
+            allow_list,
+            routing_table,
+            local_id.clone(),
+            settings,
+        )
+        .unwrap()
+    }
+
     // Get single queue channel for tests (peer1, peer2, or peer3)
     fn get_broker_node(port: u16, peer: u8) -> BrokerNode {
-        let (allow_list, routing_table, settings) = get_allow_routing_settings();
+        let (allow_list, _, settings) = get_allow_routing_settings();
         let selected_peer = get_peer_info(port, peer);
-        let broker_node = BrokerNode::new(
+        let broker_node = BrokerNode::new_peers(
             "testqueue",
             selected_peer.address,
             &selected_peer.privk,
             selected_peer.storage.clone(),
             &tmp_path("broker_comms", selected_peer.address.port()),
             allow_list.clone(),
-            routing_table.clone(),
             settings,
         )
         .unwrap();
@@ -516,7 +684,7 @@ mod tests {
 
     fn assert_msgs_received(
         received_msgs: &Vec<ReceivedMessage>,
-        expected_msgs: &Vec<Vec<u8>>,
+        expected_msgs: &Vec<String>,
         expected_pubk_hashes: &Vec<PubkHash>,
     ) {
         assert_eq!(received_msgs.len(), expected_msgs.len());
@@ -546,10 +714,10 @@ mod tests {
 
         let (mut broker_node1, mut broker_node2, mut broker_node3) = get_broker_nodes(port);
 
-        let msg = b"Hello, World!".to_vec();
+        let msg = "Hello, World!".to_string();
 
         broker_node1
-            .send(
+            .send_peer(
                 CTX,
                 &broker_node2.get_pubk_hash().unwrap(),
                 broker_node2.get_address(),
@@ -560,7 +728,7 @@ mod tests {
         broker_node1.tick().unwrap();
         broker_node2.tick().unwrap();
 
-        let received_msgs = broker_node2.check_receive().unwrap();
+        let received_msgs = broker_node2.check_receive(None).unwrap();
         assert_msgs_received(
             &received_msgs,
             &vec![msg],
@@ -584,11 +752,11 @@ mod tests {
 
         let (mut broker_node1, mut broker_node2, mut broker_node3) = get_broker_nodes(port);
 
-        let msg1 = b"Message from Channel 1".to_vec();
-        let msg2 = b"Message from Channel 2".to_vec();
+        let msg1 = "Message from Channel 1".to_string();
+        let msg2 = "Message from Channel 2".to_string();
 
         broker_node1
-            .send(
+            .send_peer(
                 CTX,
                 &broker_node2.get_pubk_hash().unwrap(),
                 broker_node2.get_address(),
@@ -596,7 +764,7 @@ mod tests {
             )
             .unwrap();
         broker_node2
-            .send(
+            .send_peer(
                 CTX,
                 &broker_node1.get_pubk_hash().unwrap(),
                 broker_node1.get_address(),
@@ -608,8 +776,8 @@ mod tests {
         broker_node2.tick().unwrap();
         broker_node1.tick().unwrap(); // Extra tick so that channel1 can process incoming msg
 
-        let received_msgs1 = broker_node1.check_receive().unwrap();
-        let received_msgs2 = broker_node2.check_receive().unwrap();
+        let received_msgs1 = broker_node1.check_receive(None).unwrap();
+        let received_msgs2 = broker_node2.check_receive(None).unwrap();
 
         assert_msgs_received(
             &received_msgs1,
@@ -640,10 +808,10 @@ mod tests {
 
         let (mut broker_node1, mut broker_node2, mut broker_node3) = get_broker_nodes(port);
 
-        let msg = b"Persistent Message".to_vec();
+        let msg = "Persistent Message".to_string();
 
         broker_node1
-            .send(
+            .send_peer(
                 CTX,
                 &broker_node2.get_pubk_hash().unwrap(),
                 broker_node2.get_address(),
@@ -658,13 +826,13 @@ mod tests {
         broker_node2 = get_broker_node(port, 2);
 
         // After reconnecting no messages should be received yet
-        let received_msgs = broker_node2.check_receive().unwrap();
+        let received_msgs = broker_node2.check_receive(None).unwrap();
         assert_eq!(received_msgs.len(), 0);
 
         // Tick again to process any queued messages
         broker_node1.tick().unwrap();
         broker_node2.tick().unwrap();
-        let received_msgs = broker_node2.check_receive().unwrap();
+        let received_msgs = broker_node2.check_receive(None).unwrap();
         assert_msgs_received(
             &received_msgs,
             &vec![msg],
@@ -693,12 +861,12 @@ mod tests {
 
         // Send 15 messages
         for i in 0..15u8 {
-            let msg = format!("msg-{}", i).into_bytes();
+            let msg = format!("msg-{}", i);
             sent_msgs.push(msg.clone());
             expected_hashes.push(sender.get_pubk_hash().unwrap());
 
             sender
-                .send(
+                .send_peer(
                     CTX,
                     &receiver.get_pubk_hash().unwrap(),
                     receiver.get_address(),
@@ -710,7 +878,7 @@ mod tests {
         sender.tick().unwrap();
         receiver.tick().unwrap();
 
-        let received = receiver.check_receive().unwrap();
+        let received = receiver.check_receive(None).unwrap();
 
         assert_eq!(received.len(), 15);
 
@@ -752,11 +920,11 @@ mod tests {
         let mut sent_msgs_r1 = Vec::new();
         let mut sent_msgs_r2 = Vec::new();
         for i in 0..total_msgs {
-            let msg1 = format!("r1-msg-{i}").into_bytes();
-            let msg2 = format!("r2-msg-{i}").into_bytes();
+            let msg1 = format!("r1-msg-{i}");
+            let msg2 = format!("r2-msg-{i}");
 
             sender
-                .send(
+                .send_peer(
                     CTX,
                     &receiver1.get_pubk_hash().unwrap(),
                     receiver1.get_address(),
@@ -765,7 +933,7 @@ mod tests {
                 .unwrap();
 
             sender
-                .send(
+                .send_peer(
                     CTX,
                     &receiver2.get_pubk_hash().unwrap(),
                     receiver2.get_address(),
@@ -781,8 +949,8 @@ mod tests {
         sender.tick().unwrap();
         receiver1.tick().unwrap();
         receiver2.tick().unwrap();
-        let recv1_first = receiver1.check_receive().unwrap();
-        let recv2_first = receiver2.check_receive().unwrap();
+        let recv1_first = receiver1.check_receive(None).unwrap();
+        let recv2_first = receiver2.check_receive(None).unwrap();
         assert_eq!(recv1_first.len(), max_per_dest);
         assert_eq!(recv2_first.len(), max_per_dest);
 
@@ -790,13 +958,13 @@ mod tests {
         sender.tick().unwrap();
         receiver1.tick().unwrap();
         receiver2.tick().unwrap();
-        let recv1_second = receiver1.check_receive().unwrap();
-        let recv2_second = receiver2.check_receive().unwrap();
+        let recv1_second = receiver1.check_receive(None).unwrap();
+        let recv2_second = receiver2.check_receive(None).unwrap();
         assert_eq!(recv1_second.len(), excess_msgs);
         assert_eq!(recv2_second.len(), excess_msgs);
 
         // Validate contents
-        let recv1_all: Vec<Vec<u8>> = recv1_first
+        let recv1_all: Vec<String> = recv1_first
             .into_iter()
             .chain(recv1_second.into_iter())
             .map(|msg| match msg {
@@ -804,7 +972,7 @@ mod tests {
                 _ => panic!("Unexpected error"),
             })
             .collect();
-        let recv2_all: Vec<Vec<u8>> = recv2_first
+        let recv2_all: Vec<String> = recv2_first
             .into_iter()
             .chain(recv2_second.into_iter())
             .map(|msg| match msg {
@@ -838,10 +1006,10 @@ mod tests {
         receiver.close();
         drop(receiver);
 
-        let msg = b"deadletter-message".to_vec();
+        let msg = "deadletter-message".to_string();
 
         sender
-            .send(CTX, &receiver_pubk_hash, receiver_addr, msg.clone())
+            .send_peer(CTX, &receiver_pubk_hash, receiver_addr, msg.clone())
             .unwrap();
 
         // Keep ticking until message appears in dead letter queue or timeout
@@ -854,7 +1022,7 @@ mod tests {
         loop {
             sender.tick().unwrap();
 
-            let deadletters = sender.check_deadletter().unwrap();
+            let deadletters = sender.check_deadletter(None).unwrap();
             if !deadletters.is_empty() {
                 assert_eq!(deadletters.len(), 1);
                 match &deadletters[0] {
@@ -879,6 +1047,137 @@ mod tests {
         drop(sender);
         drop(broker_node3);
         cleanup_storage(port, 3);
+    }
+
+    // Two components exchanging messages through one services broker: bitvmx hosts the broker and
+    // reads its own destination, the emulator dials in over TLS and reads its own.
+    #[test]
+    fn test_service_send_receive() {
+        let port = 12018;
+        cleanup_storage(port, 1);
+
+        let bitvmx_id = Identifier::new("bitvmx_component".to_string(), 0);
+        let mut bitvmx = get_service_node(port, &bitvmx_id);
+        assert_eq!(bitvmx.get_local_id(), bitvmx_id);
+
+        // The emulator is a plain client: no server and no node of its own.
+        let (_, _, settings) = get_allow_routing_settings();
+        let (allow_list, _, _) = get_allow_routing_settings();
+        let address = bitvmx.get_address();
+        let config = BrokerConfig::new(
+            address.port(),
+            Some(address.ip()),
+            bitvmx.get_pubk_hash().unwrap(),
+            Some(settings),
+        );
+        let emulator_cert = Cert::new_with_privk(PRIVK2).unwrap();
+        let emulator_id = Identifier::new(emulator_cert.get_pubk_hash().unwrap(), 0);
+        let emulator = RemoteChannel::new(&config, emulator_cert, Some(0), allow_list).unwrap();
+
+        // Emulator to bitvmx. The sender is derived from the certificate the emulator presented.
+        assert!(emulator
+            .send(&bitvmx_id, "job finished".to_string())
+            .unwrap());
+        bitvmx.tick().unwrap();
+        assert_msgs_received(
+            &bitvmx.check_receive(None).unwrap(),
+            &vec!["job finished".to_string()],
+            &vec![emulator_id.pubkey_hash.clone()],
+        );
+
+        // Bitvmx back to the emulator, which reads its own destination with get and ack.
+        bitvmx
+            .send_service(&emulator_id, "next job".to_string())
+            .unwrap();
+        let reply = emulator.get().unwrap().unwrap();
+        assert_eq!(reply.msg, "next job");
+        assert_eq!(reply.from, bitvmx_id);
+        assert!(emulator.ack(reply.uid).unwrap());
+        assert!(emulator.get().unwrap().is_none());
+
+        bitvmx.close();
+        drop(bitvmx);
+        cleanup_storage(port, 1);
+    }
+
+    // A tick moves everything into the in queue, but the caller decides how much of it to take.
+    #[test]
+    fn test_check_receive_max() {
+        let port = 12021;
+        cleanup_storage(port, 3);
+
+        let (mut sender, mut receiver, mut broker_node3) = get_broker_nodes(port);
+
+        for i in 0..5u8 {
+            sender
+                .send_peer(
+                    CTX,
+                    &receiver.get_pubk_hash().unwrap(),
+                    receiver.get_address(),
+                    format!("msg-{}", i),
+                )
+                .unwrap();
+        }
+        sender.tick().unwrap();
+        receiver.tick().unwrap();
+
+        // Oldest first, and the rest stay queued.
+        let first = receiver.check_receive(Some(2)).unwrap();
+        assert_msgs_received(
+            &first,
+            &vec!["msg-0".to_string(), "msg-1".to_string()],
+            &vec![sender.get_pubk_hash().unwrap(); 2],
+        );
+
+        // A cap larger than what is waiting takes what there is, without ticking again.
+        let rest = receiver.check_receive(Some(10)).unwrap();
+        assert_msgs_received(
+            &rest,
+            &vec![
+                "msg-2".to_string(),
+                "msg-3".to_string(),
+                "msg-4".to_string(),
+            ],
+            &vec![sender.get_pubk_hash().unwrap(); 3],
+        );
+
+        assert!(receiver.check_receive(None).unwrap().is_empty());
+
+        sender.close();
+        receiver.close();
+        broker_node3.close();
+        drop(sender);
+        drop(receiver);
+        drop(broker_node3);
+        cleanup_storage(port, 3);
+    }
+
+    #[test]
+    fn test_send_rejects_the_other_mode() {
+        let service_port = 12019;
+        let peer_port = 12020;
+        cleanup_storage(service_port, 2);
+
+        let local_id = Identifier::new("service_address".to_string(), 0);
+
+        let mut services = get_service_node(service_port, &local_id);
+        let address = services.get_address();
+        assert!(matches!(
+            services.send_peer(CTX, &"somepeer".to_string(), address, "x".to_string()),
+            Err(BrokerError::WrongNodeMode(_))
+        ));
+        services.close();
+        drop(services);
+
+        let mut peers = get_broker_node(peer_port, 1);
+        assert!(matches!(
+            peers.send_service(&local_id, "x".to_string()),
+            Err(BrokerError::WrongNodeMode(_))
+        ));
+        peers.close();
+        drop(peers);
+
+        cleanup_storage(service_port, 2);
     }
 
     pub fn init_tracing() -> anyhow::Result<()> {

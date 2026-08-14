@@ -16,9 +16,9 @@ impl LocalChannel {
         Self { my_id, storage }
     }
 
-    pub fn send(&self, dest: &Identifier, msg: String) -> Result<bool, BrokerError> {
+    pub fn send(&self, dest: &Identifier, msg: String) -> Result<(), BrokerError> {
         self.storage.insert(self.my_id.clone(), dest.clone(), msg)?;
-        Ok(true)
+        Ok(())
     }
 
     pub fn get(&self) -> Result<Option<Message>, BrokerError> {
@@ -33,6 +33,8 @@ impl LocalChannel {
         Ok(self.storage.remove(self.my_id.clone(), uid)?)
     }
 
+    /// Acknowledges before the caller has seen the message, so a failure afterwards loses it. Use
+    /// [`LocalChannel::get`] and [`LocalChannel::ack`] separately when the message must survive that.
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, BrokerError> {
         if let Some(msg) = self.get()? {
             self.ack(msg.uid)?;
