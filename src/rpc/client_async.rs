@@ -27,6 +27,7 @@ pub struct BrokerClientAsync {
     cert: Cert,
     allow_list: Arc<ArcMutex<AllowList>>,
     msg_config: MsgSizeConfig,
+    expected_pubk_hash: String, // Which broker is expected at address.
 }
 
 impl Clone for BrokerClientAsync {
@@ -37,7 +38,7 @@ impl Clone for BrokerClientAsync {
 
 impl BrokerClientAsync {
     pub fn new(config: &BrokerConfig, cert: Cert, allow_list: Arc<ArcMutex<AllowList>>) -> Self {
-        let address = SocketAddr::new(config.ip, config.port);
+        let address = config.dial_addr();
         info!("BrokerClientAsync address: {}", address);
         Self {
             address,
@@ -45,6 +46,7 @@ impl BrokerClientAsync {
             cert,
             allow_list,
             msg_config: config.get_settings().msg_size_config,
+            expected_pubk_hash: config.get_pubk_hash(),
         }
     }
 
@@ -97,6 +99,15 @@ impl BrokerClientAsync {
         if !allow {
             drop(tls_stream);
             return Err(BrokerError::UnauthorizedFingerprint(server_fingerprint));
+        }
+
+        // Without this, any allowlisted broker answering at the address would be accepted instead.
+        if server_fingerprint != self.expected_pubk_hash {
+            drop(tls_stream);
+            return Err(BrokerError::ServerIdentityMismatch {
+                expected: self.expected_pubk_hash.clone(),
+                got: server_fingerprint,
+            });
         }
 
         // Server is authorized
@@ -188,6 +199,7 @@ impl BrokerClientAsync {
             cert: self.cert.clone(),
             allow_list: self.allow_list.clone(),
             msg_config: self.msg_config.clone(),
+            expected_pubk_hash: self.expected_pubk_hash.clone(),
         })
     }
 }

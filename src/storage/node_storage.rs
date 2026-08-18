@@ -61,7 +61,7 @@ impl BrokerNodeStorage {
 
     fn next_uid(&self, queue: &QueueType) -> Result<u64, BrokerStorageError> {
         let key = self.uid_key(queue);
-        let uid: u64 = self.storage.get(&key, None).unwrap_or(None).unwrap_or(0) + 1;
+        let uid: u64 = self.storage.get(&key, None)?.unwrap_or(0) + 1;
         self.storage.set(&key, uid, None)?;
         Ok(uid)
     }

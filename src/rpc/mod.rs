@@ -1,11 +1,6 @@
 use crate::{
     identification::identifier::Identifier,
-    rpc::{
-        config::BrokerSettings,
-        errors::{BrokerError, BrokerRpcError},
-        tls_helper::Cert,
-    },
-    settings::SERVER_ID,
+    rpc::{config::BrokerSettings, errors::BrokerRpcError},
 };
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -36,8 +31,7 @@ pub(crate) trait BrokerApi {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BrokerConfig {
     port: u16,
-    ip: IpAddr,
-    listen_ip: IpAddr,
+    ip: Option<IpAddr>, //A server left unspecified listens everywhere and a client left unspecified dials this machine.
     pubk_hash: String,
     broker_settings: BrokerSettings,
 }
@@ -51,55 +45,37 @@ impl BrokerConfig {
     ) -> Self {
         Self {
             port,
-            ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
+            ip,
             pubk_hash,
             broker_settings: broker_settings.unwrap_or_default(),
         }
-    }
-
-    // Do not use in production, this is for testing purposes
-    pub fn new_only_address(
-        port: u16,
-        ip: Option<IpAddr>,
-    ) -> Result<(Self, Identifier, Cert), BrokerError> {
-        let cert = Cert::new()?;
-        let pubk_hash = cert.get_pubk_hash()?;
-
-        let identifier = Identifier {
-            pubkey_hash: pubk_hash.clone(),
-            id: SERVER_ID,
-        };
-        Ok((
-            Self {
-                port,
-                ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-                listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
-                pubk_hash,
-                broker_settings: BrokerSettings::default(),
-            },
-            identifier,
-            cert,
-        ))
     }
 
     pub fn get_pubk_hash(&self) -> String {
         self.pubk_hash.clone()
     }
 
-    pub fn get_id(&self) -> u8 {
-        SERVER_ID
-    }
-
     pub fn get_port(&self) -> u16 {
         self.port
     }
 
-    pub fn get_address(&self) -> SocketAddr {
-        SocketAddr::new(self.ip, self.port)
+    /// Where a server listens.
+    pub fn bind_addr(&self) -> SocketAddr {
+        SocketAddr::new(
+            self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            self.port,
+        )
     }
 
-    pub fn get_ip(&self) -> IpAddr {
+    /// Where a client connects.
+    pub fn dial_addr(&self) -> SocketAddr {
+        SocketAddr::new(
+            self.ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            self.port,
+        )
+    }
+
+    pub fn get_ip(&self) -> Option<IpAddr> {
         self.ip
     }
 

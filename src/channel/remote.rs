@@ -8,6 +8,7 @@ use crate::{
         tls_helper::Cert,
         BrokerConfig, Message,
     },
+    settings::SERVER_ID,
 };
 use std::sync::{Arc, Mutex};
 
@@ -33,7 +34,7 @@ impl RemoteChannel {
         };
         let dest_id = Identifier {
             pubkey_hash: config.get_pubk_hash(),
-            id: config.get_id(),
+            id: SERVER_ID,
         };
         Ok(Self {
             client,
@@ -56,7 +57,7 @@ impl RemoteChannel {
         };
         let dest_id = Identifier {
             pubkey_hash: config.get_pubk_hash(),
-            id: config.get_id(),
+            id: SERVER_ID,
         };
         Ok(Self {
             client,

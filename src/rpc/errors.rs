@@ -27,6 +27,10 @@ pub enum BrokerError {
     #[error("Unauthorized fingerprint: {0}")]
     UnauthorizedFingerprint(String),
 
+    // A different broker answered than the one that was dialled.
+    #[error("Expected broker {expected}, but {got} answered at that address")]
+    ServerIdentityMismatch { expected: String, got: String },
+
     #[error("Failed with certs/keys/allowlist")]
     AboutCertsAllow(#[from] anyhow::Error),
 
