@@ -24,7 +24,6 @@ use rustls::{
 use sha2::{Digest, Sha256};
 use std::{
     io,
-    sync::Once,
     sync::{Arc, Mutex},
 };
 use tracing::info;
@@ -397,12 +396,4 @@ impl ClientCertVerifier for AllowListClientVerifier {
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.inner.supported_verify_schemes()
     }
-}
-
-static INIT_TLS: Once = Once::new();
-
-pub fn init_tls() {
-    INIT_TLS.call_once(|| {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    });
 }
