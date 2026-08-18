@@ -3,7 +3,7 @@ use crate::{
     rpc::{
         config::BrokerSettings,
         errors::{BrokerError, BrokerRpcError},
-        tls_helper::{init_tls, Cert},
+        tls_helper::Cert,
     },
     settings::SERVER_ID,
 };
@@ -49,8 +49,6 @@ impl BrokerConfig {
         pubk_hash: String,
         broker_settings: Option<BrokerSettings>,
     ) -> Self {
-        init_tls(); // Ensure the CryptoProvider is initialized
-                    //TODO: remove
         Self {
             port,
             ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
@@ -109,4 +107,3 @@ impl BrokerConfig {
         self.broker_settings.clone()
     }
 }
-
