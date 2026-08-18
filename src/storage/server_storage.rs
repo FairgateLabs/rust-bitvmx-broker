@@ -6,7 +6,7 @@
 // Then we sort the keys get the oldest message (as uid is incremental).
 // To get the info for the message, we split the key and get the uid and from fields.
 
-use crate::identification::identifier::Identifier;
+use crate::identification::identifier::{validate_pubkey_hash, Identifier};
 use crate::rpc::errors::MutexExt;
 use crate::rpc::Message;
 use crate::storage::errors::BrokerStorageError;
@@ -40,8 +40,18 @@ impl BrokerServerStorage {
         format!("{MSGS_PREFIX}/{dest}/")
     }
 
-    fn msg_key(dest: &Identifier, uid: u64, from: &Identifier) -> String {
-        format!("{}{}/{from}", Self::msgs_prefix(dest), format_uid(uid))
+    fn msg_key(
+        dest: &Identifier,
+        uid: u64,
+        from: &Identifier,
+    ) -> Result<String, BrokerStorageError> {
+        validate_pubkey_hash(&dest.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
+        validate_pubkey_hash(&from.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
+        Ok(format!(
+            "{}{}/{from}",
+            Self::msgs_prefix(dest),
+            format_uid(uid)
+        ))
     }
 
     // Splits "broker/msgs/{dest}/{uid}/{from}" into the uid and the sender.
@@ -112,12 +122,13 @@ impl BrokerServerStorage {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
 
         let uid: u64 = storage.get(UID_KEY, None)?.unwrap_or(0) + 1;
+        let key = Self::msg_key(&dest, uid, &from)?;
 
         // The new uid and the message it names are written together.
         let tx = storage.begin_transaction();
         let written = storage
             .set(UID_KEY, uid, Some(tx))
-            .and_then(|_| storage.set(&Self::msg_key(&dest, uid, &from), msg, Some(tx)));
+            .and_then(|_| storage.set(&key, msg, Some(tx)));
 
         match written {
             Ok(()) => Ok(storage.commit_transaction(tx)?),
