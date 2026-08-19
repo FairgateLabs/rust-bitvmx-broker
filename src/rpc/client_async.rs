@@ -37,7 +37,7 @@ impl Clone for BrokerClientAsync {
 
 impl BrokerClientAsync {
     pub fn new(config: &BrokerConfig, cert: Cert, allow_list: Arc<ArcMutex<AllowList>>) -> Self {
-        let address = SocketAddr::new(config.ip, config.port);
+        let address = config.dial_addr();
         info!("BrokerClientAsync address: {}", address);
         Self {
             address,

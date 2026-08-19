@@ -56,7 +56,7 @@ impl BrokerServer {
         let rt = Runtime::new()?;
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
-        let listener = rt.block_on(TcpListener::bind((config.listen_ip, config.port)))?;
+        let listener = rt.block_on(TcpListener::bind(config.bind_addr()))?;
         info!(
             "Listening with TLS on port {}",
             listener.local_addr()?.port()

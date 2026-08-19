@@ -64,12 +64,7 @@ fn main() {
     let routing = RoutingTable::new();
     routing.lock().unwrap().allow_all();
     let config = BrokerSettings::new("config/broker_settings.yaml").unwrap();
-    let config = BrokerConfig::new(
-        flags.port,
-        None,
-        cert.get_pubk_hash().unwrap(),
-        Some(config),
-    );
+    let config = BrokerConfig::new(flags.port, None, Some(config));
 
     let mut server =
         BrokerServer::new(&config, "storage.db", cert, allow_list.clone(), routing).unwrap();

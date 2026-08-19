@@ -32,12 +32,7 @@ fn prepare_server(
     routing: Arc<Mutex<RoutingTable>>,
 ) -> (BrokerServer, LocalChannel) {
     let server_cert = Cert::new_with_privk(privk_pem).unwrap();
-    let server_config = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        server_cert.get_pubk_hash().unwrap(),
-        None,
-    );
+    let server_config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
     let server = BrokerServer::new(
         &server_config,
         &storage_path(port),
@@ -76,13 +71,15 @@ fn prepare_client_with_id(
     allow_list: Arc<Mutex<AllowList>>,
 ) -> RemoteChannel {
     let client_cert = Cert::new_with_privk(client_privk_pem).unwrap();
-    let server_config = BrokerConfig::new(
-        server_port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+    let server_config = BrokerConfig::new(server_port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
+    let user = RemoteChannel::new(
+        &server_config,
+        client_cert,
+        id,
+        allow_list,
         server_pubk_hash.to_string(),
-        None,
-    );
-    let user = RemoteChannel::new(&server_config, client_cert, id, allow_list).unwrap();
+    )
+    .unwrap();
     user
 }
 
@@ -251,27 +248,16 @@ fn test_ack() {
     let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
-    let client_config1 = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client1.get_pkh(),
-        None,
-    );
+    // Both clients dial the same broker, so they share its config and differ only in their cert.
+    let server_config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
     let myclient1 = BrokerClient::new(
-        &client_config1,
+        &server_config,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list.clone(),
     )
     .unwrap();
-
-    let client_config2 = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client2.get_pkh(),
-        None,
-    );
     let myclient2 = BrokerClient::new(
-        &client_config2,
+        &server_config,
         Cert::new_with_privk(&client2.privk).unwrap(),
         allow_list,
     )
@@ -319,27 +305,16 @@ fn test_reconnect() {
     let _ = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
     let _ = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
 
-    let client_config1 = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client1.get_pkh(),
-        None,
-    );
+    // Both clients dial the same broker, so they share its config and differ only in their cert.
+    let server_config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
     let myclient1 = BrokerClient::new(
-        &client_config1,
+        &server_config,
         Cert::new_with_privk(&client1.privk).unwrap(),
         allow_list.clone(),
     )
     .unwrap();
-
-    let client_config2 = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client2.get_pkh(),
-        None,
-    );
     let myclient2 = BrokerClient::new(
-        &client_config2,
+        &server_config,
         Cert::new_with_privk(&client2.privk).unwrap(),
         allow_list.clone(),
     )
@@ -725,10 +700,9 @@ fn test_simple_channel() {
     let (mut broker_server, _) =
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
 
-    let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
-    let (user1, client1) = RemoteChannel::new_simple(&server_config, 0).unwrap();
-    let (server_config, _, _) = BrokerConfig::new_only_address(server.port, None).unwrap();
-    let (user2, client2) = RemoteChannel::new_simple(&server_config, 0).unwrap();
+    let server_config = BrokerConfig::new(server.port, None, None);
+    let (user1, client1) = RemoteChannel::new_simple(&server_config, 0, server.get_pkh()).unwrap();
+    let (user2, client2) = RemoteChannel::new_simple(&server_config, 0, server.get_pkh()).unwrap();
 
     user1.send(&client2, "Hello!".to_string()).unwrap();
     let msg = recv_and_ack(&user2).unwrap().unwrap();
@@ -827,32 +801,17 @@ fn test_ca() {
     let (server, client1, client2) = get_keys(port);
     let allow_list = create_allow_list(vec![server.get_identifier(), client1.get_identifier()]);
 
+    // One broker, so one config: the server binds it and both clients dial it. What separates the three is the certificate each one presents.
+    let server_config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
+
     // Clients
     let client_cert1 = Cert::new_with_privk_and_ca(&client1.privk, ca_key1).unwrap();
     let client_cert2 = Cert::new_with_privk_and_ca(&client2.privk, ca_key2).unwrap();
-    let client_config1 = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client1.get_pkh(),
-        None,
-    );
-    let client_config2 = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        client2.get_pkh(),
-        None,
-    );
-    let myclient1 = BrokerClient::new(&client_config1, client_cert1, allow_list.clone()).unwrap();
-    let myclient2 = BrokerClient::new(&client_config2, client_cert2, allow_list.clone()).unwrap();
+    let myclient1 = BrokerClient::new(&server_config, client_cert1, allow_list.clone()).unwrap();
+    let myclient2 = BrokerClient::new(&server_config, client_cert2, allow_list.clone()).unwrap();
 
     //Server
     let server_cert = Cert::new_with_privk_and_ca(&server.privk, ca_key1).unwrap();
-    let server_config = BrokerConfig::new(
-        port,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        server.get_pkh().to_string(),
-        None,
-    );
     let mut broker_server = BrokerServer::new(
         &server_config,
         &storage_path(port),
@@ -973,17 +932,11 @@ fn test_readme_example() {
     cleanup_storage(port, 3);
     // Create Server
     let server_cert = Cert::new().unwrap();
-    let server_pubkey_hash = server_cert.get_pubk_hash().unwrap();
 
     let allow_list = AllowList::new();
     let routing_table = RoutingTable::new();
 
-    let config = BrokerConfig::new(
-        10000,
-        Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        server_pubkey_hash,
-        None,
-    );
+    let config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
     let _server = BrokerServer::new(
         &config,
         &storage_path(port),

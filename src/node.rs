@@ -91,11 +91,9 @@ impl BrokerNode {
         broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
         let cert = Cert::new_with_privk(server_privk)?;
-        let pubk_hash = cert.get_pubk_hash()?;
         let broker_config = BrokerConfig::new(
             address.port(),
             Some(address.ip()),
-            pubk_hash.clone(),
             Some(broker_settings.clone()),
         );
 
@@ -378,18 +376,33 @@ impl BrokerNode {
         dest_pubk_hash: &str,
         msg: &str,
     ) -> Result<bool, BrokerError> {
-        // It doesnt check address when sending data, only when receiving
+        // Check if the destination is in the allow list
+        if !self
+            .allow_list
+            .lock_or_err::<BrokerError>("allow_list")?
+            .is_allowed(&dest_pubk_hash.to_string(), address.ip())
+        {
+            return Err(BrokerError::UnauthorizedFingerprint(
+                dest_pubk_hash.to_string(),
+            ));
+        }
+
         let server_config = BrokerConfig::new(
             address.port(),
             Some(address.ip()),
-            dest_pubk_hash.to_string(),
             Some(self.broker_settings.clone()),
         );
+
+        // Exactly one broker is acceptable here, so the connection carries a list holding only it.
+        let dest_allow_list = AllowList::new();
+        dest_allow_list
+            .lock_or_err::<BrokerError>("dest_allow_list")?
+            .add_entry(dest_pubk_hash.to_string(), Some(address.ip()));
 
         let client = BrokerClient::new_with_runtime(
             &server_config,
             self.cert.clone(),
-            self.allow_list.clone(),
+            dest_allow_list,
             self.rt.clone(),
         )?;
 
@@ -1064,15 +1077,17 @@ mod tests {
         let (_, _, settings) = get_allow_routing_settings();
         let (allow_list, _, _) = get_allow_routing_settings();
         let address = bitvmx.get_address();
-        let config = BrokerConfig::new(
-            address.port(),
-            Some(address.ip()),
-            bitvmx.get_pubk_hash().unwrap(),
-            Some(settings),
-        );
+        let config = BrokerConfig::new(address.port(), Some(address.ip()), Some(settings));
         let emulator_cert = Cert::new_with_privk(PRIVK2).unwrap();
         let emulator_id = Identifier::new(emulator_cert.get_pubk_hash().unwrap(), 0);
-        let emulator = RemoteChannel::new(&config, emulator_cert, Some(0), allow_list).unwrap();
+        let emulator = RemoteChannel::new(
+            &config,
+            emulator_cert,
+            Some(0),
+            allow_list,
+            bitvmx.get_pubk_hash().unwrap(),
+        )
+        .unwrap();
 
         // Emulator to bitvmx. The sender is derived from the certificate the emulator presented.
         assert!(emulator
