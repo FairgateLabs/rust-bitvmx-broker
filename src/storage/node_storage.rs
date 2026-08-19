@@ -4,7 +4,7 @@
 //     the destination address for the out and dead letter queues, and the sender id for the in queue.
 // It runs on the single threaded storage the caller owns, so it takes an Rc and never locks.
 
-use crate::identification::identifier::{Identifier, PubkHash};
+use crate::identification::identifier::{validate_pubkey_hash, Identifier, PubkHash};
 use crate::rpc::Message;
 use crate::storage::errors::BrokerStorageError;
 use std::net::SocketAddr;
@@ -40,15 +40,22 @@ impl BrokerNodeStorage {
         }
     }
 
-    fn msg_key(&self, queue: &QueueType, uid: u64, pubk_hash: &str, tag: &str) -> String {
-        format!(
+    fn msg_key(
+        &self,
+        queue: &QueueType,
+        uid: u64,
+        pubk_hash: &str,
+        tag: &str,
+    ) -> Result<String, BrokerStorageError> {
+        validate_pubkey_hash(pubk_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
+        Ok(format!(
             "broker/{}/{}/msgs/{}/{}/{}",
             queue.as_str(),
             self.name,
             uid,
             pubk_hash,
             tag
-        )
+        ))
     }
 
     fn msgs_prefix(&self, queue: &QueueType) -> String {
@@ -69,7 +76,7 @@ impl BrokerNodeStorage {
     // Splits the trailing fields out of a key, which sit at index 5 and 6.
     fn key_fields(key: &str) -> Result<(&str, &str), BrokerStorageError> {
         let parts: Vec<&str> = key.split('/').collect();
-        if parts.len() < 7 {
+        if parts.len() != 7 {
             return Err(BrokerStorageError::MalformedKey(key.to_string()));
         }
         Ok((parts[5], parts[6]))
@@ -135,7 +142,7 @@ impl BrokerNodeStorage {
         raw: &str,
     ) -> Result<(), BrokerStorageError> {
         let uid = self.next_uid(&QueueType::OutQueue)?;
-        let key = self.msg_key(&QueueType::OutQueue, uid, pubk_hash, &address.to_string());
+        let key = self.msg_key(&QueueType::OutQueue, uid, pubk_hash, &address.to_string())?;
         self.storage.set(&key, raw, None)?;
         Ok(())
     }
@@ -152,7 +159,7 @@ impl BrokerNodeStorage {
             uid,
             pubk_hash,
             &address.to_string(),
-        );
+        )?;
         self.storage.set(&key, raw, None)?;
         Ok(())
     }
@@ -167,7 +174,7 @@ impl BrokerNodeStorage {
                 msg.uid,
                 &msg.from.pubkey_hash,
                 &msg.from.id.to_string(),
-            );
+            )?;
             self.storage.set(&key, msg.msg.clone(), Some(tx))?;
         }
         self.storage.commit_transaction(tx)?;
