@@ -7,6 +7,7 @@ use bitvmx_broker::{
     },
     rpc::{
         client::BrokerClient,
+        config::BrokerSettings,
         errors::{BrokerError, BrokerRpcError},
         server::BrokerServer,
         tls_helper::Cert,
@@ -31,8 +32,18 @@ fn prepare_server(
     allow_list: Arc<Mutex<AllowList>>,
     routing: Arc<Mutex<RoutingTable>>,
 ) -> (BrokerServer, LocalChannel) {
+    prepare_server_with_settings(port, privk_pem, allow_list, routing, None)
+}
+
+fn prepare_server_with_settings(
+    port: u16,
+    privk_pem: &str,
+    allow_list: Arc<Mutex<AllowList>>,
+    routing: Arc<Mutex<RoutingTable>>,
+    settings: Option<BrokerSettings>,
+) -> (BrokerServer, LocalChannel) {
     let server_cert = Cert::new_with_privk(privk_pem).unwrap();
-    let server_config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
+    let server_config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), settings);
     let server = BrokerServer::new(
         &server_config,
         &storage_path(port),
@@ -920,6 +931,76 @@ fn test_rate_limit_enforced() {
         "request after wait unexpectedly failed: {:?}",
         res
     );
+
+    broker_server.close();
+    drop(broker_server);
+    cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_queue_depth_cap() {
+    const MAX_DEPTH: u64 = 5;
+    let port = 10080;
+    cleanup_storage(port, 3);
+
+    let (server, client1, client2) = get_keys(port);
+    let (client3, _, _) = get_other_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+        client3.get_identifier(),
+    ]);
+
+    let mut settings = BrokerSettings::default();
+    settings.queue_config.max_queue_depth = MAX_DEPTH;
+
+    let (mut broker_server, _) = prepare_server_with_settings(
+        port,
+        &server.privk,
+        allow_list.clone(),
+        route_all(),
+        Some(settings),
+    );
+
+    let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
+    let user2 = prepare_client(port, &server.get_pkh(), &client2.privk, allow_list.clone());
+    let user3 = prepare_client(port, &server.get_pkh(), &client3.privk, allow_list.clone());
+
+    // client1 fills what it is allowed to leave waiting for client2.
+    for i in 0..MAX_DEPTH {
+        user1
+            .send(&client2.get_identifier(), format!("from1-{i}"))
+            .unwrap();
+    }
+
+    // One past the cap is refused, and the sender is told instead of the broker absorbing it.
+    assert!(matches!(
+        user1.send(&client2.get_identifier(), "one too many".to_string()),
+        Err(BrokerError::BrokerRpcError(BrokerRpcError::QueueFull(_, _)))
+    ));
+
+    // The count is per pair, so client1 using up its share does not stop another sender reaching
+    // client2, nor stop client1 reaching a different destination.
+    user3
+        .send(&client2.get_identifier(), "from3".to_string())
+        .unwrap();
+    user1
+        .send(&client3.get_identifier(), "to3".to_string())
+        .unwrap();
+
+    // Draining one frees exactly one slot for the pair it belonged to.
+    let msg = recv_and_ack(&user2).unwrap().unwrap();
+    assert_eq!(msg.0, "from1-0");
+    assert_eq!(msg.1, client1.get_identifier());
+
+    user1
+        .send(&client2.get_identifier(), "after ack".to_string())
+        .unwrap();
+    assert!(matches!(
+        user1.send(&client2.get_identifier(), "full again".to_string()),
+        Err(BrokerError::BrokerRpcError(BrokerRpcError::QueueFull(_, _)))
+    ));
 
     broker_server.close();
     drop(broker_server);

@@ -14,6 +14,9 @@ pub const MAX_SEND_ATTEMPTS: u8 = 5; // Max attempts to send a message before mo
 pub const RETRY_MIN_DELAY_MSECS: u64 = 100; // Minimum delay before retrying a message send 100ms
 pub const RETRY_MAX_DELAY_MSECS: u64 = 10000; // Maximum delay before retrying a message send 10s
 
+// Queue depth settings
+pub const MAX_QUEUE_DEPTH: u64 = 10000; // Max unacknowledged messages one sender may have waiting for one destination.
+
 // Msg size settings
 pub const MAX_FRAME_SIZE_KB: usize = 1024 * 8; // NOTE: `MAX_FRAME_SIZE_KB` applies to the entire
                                                // encoded frame, not just the message payload

@@ -5,8 +5,9 @@ use tracing::warn;
 use crate::{
     rpc::errors::BrokerError,
     settings::{
-        MAX_FRAME_SIZE_KB, MAX_MSGS_PER_TICK_UTILIZATION, MAX_SEND_ATTEMPTS, RATE_LIMIT_CAPACITY,
-        RATE_LIMIT_REFILL_RATE, RETRY_MAX_DELAY_MSECS, RETRY_MIN_DELAY_MSECS, TOKENS_PER_MESSAGE,
+        MAX_FRAME_SIZE_KB, MAX_MSGS_PER_TICK_UTILIZATION, MAX_QUEUE_DEPTH, MAX_SEND_ATTEMPTS,
+        RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE, RETRY_MAX_DELAY_MSECS, RETRY_MIN_DELAY_MSECS,
+        TOKENS_PER_MESSAGE,
     },
 };
 
@@ -18,6 +19,8 @@ pub struct BrokerSettings {
     pub broker_node_config: BrokerNodeConfig,
     #[serde(default)]
     pub msg_size_config: MsgSizeConfig,
+    #[serde(default)]
+    pub queue_config: QueueConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +41,12 @@ pub struct BrokerNodeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MsgSizeConfig {
     pub max_frame_size_kb: usize,
+}
+
+/// Bounds how many messages one sender may have waiting for one destination
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueConfig {
+    pub max_queue_depth: u64,
 }
 
 impl Default for RateLimiterConfig {
@@ -72,6 +81,15 @@ impl Default for MsgSizeConfig {
     }
 }
 
+impl Default for QueueConfig {
+    fn default() -> Self {
+        warn!("No queue config found, using defaults");
+        Self {
+            max_queue_depth: MAX_QUEUE_DEPTH,
+        }
+    }
+}
+
 impl Default for BrokerSettings {
     fn default() -> Self {
         warn!("No broker settings found, using defaults");
@@ -79,6 +97,7 @@ impl Default for BrokerSettings {
             rate_limiter_config: RateLimiterConfig::default(),
             broker_node_config: BrokerNodeConfig::default(),
             msg_size_config: MsgSizeConfig::default(),
+            queue_config: QueueConfig::default(),
         }
     }
 }
