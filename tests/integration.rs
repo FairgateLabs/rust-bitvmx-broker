@@ -13,7 +13,9 @@ use bitvmx_broker::{
         tls_helper::Cert,
         BrokerConfig,
     },
-    settings::{MAX_FRAME_SIZE_KB, RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE},
+    settings::{
+        FRAME_ENVELOPE_RESERVE_KB, MAX_FRAME_SIZE_KB, RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE,
+    },
 };
 use std::{
     fs::{self},
@@ -847,7 +849,11 @@ fn test_ca() {
 
 #[test]
 fn test_send_message_too_large_client_side() {
-    const MAX_MSG_SIZE_KB: usize = MAX_FRAME_SIZE_KB - 4;
+    // What the check compares against: the frame minus the room kept for the tarpc envelope.
+    const BUDGET: usize = (MAX_FRAME_SIZE_KB - FRAME_ENVELOPE_RESERVE_KB) * 1024;
+    // A payload travels as a JSON string, so it always carries its two surrounding quotes.
+    const QUOTES: usize = 2;
+
     let port = 10060;
     cleanup_storage(port, 3);
 
@@ -863,20 +869,20 @@ fn test_send_message_too_large_client_side() {
 
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
 
-    // Oversized message
-    let big_msg = "A".repeat(MAX_MSG_SIZE_KB * 1024 + 1);
-    let limit_msg = "B".repeat(MAX_MSG_SIZE_KB * 1024);
-    let over_frame_limit_msg = "C".repeat(MAX_FRAME_SIZE_KB * 1024 + 1);
+    // Exactly the largest payload that still fits once encoded, and the first one that does not.
+    let largest_fitting = "B".repeat(BUDGET - QUOTES);
+    let one_byte_over = "B".repeat(BUDGET - QUOTES + 1);
+
+    assert!(user1
+        .send(&client2.get_identifier(), largest_fitting)
+        .is_ok());
 
     assert!(matches!(
-        user1.send(&client2.get_identifier(), big_msg),
-        Err(BrokerError::MessageTooLarge(_, _))
+        user1.send(&client2.get_identifier(), one_byte_over),
+        Err(BrokerError::BrokerRpcError(BrokerRpcError::MessageTooLarge(max, got)))
+            if max == BUDGET / 1024 && got == (BUDGET + 1).div_ceil(1024)
     ));
-    assert!(user1.send(&client2.get_identifier(), limit_msg).is_ok());
-    assert!(matches!(
-        user1.send(&client2.get_identifier(), over_frame_limit_msg),
-        Err(BrokerError::MessageTooLarge(_, _))
-    ));
+
     broker_server.close();
     drop(broker_server);
     cleanup_storage(port, 3);

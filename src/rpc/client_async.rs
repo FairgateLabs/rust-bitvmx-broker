@@ -3,6 +3,7 @@ use crate::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{
         config::MsgSizeConfig,
+        ensure_msg_fits,
         errors::MutexExt,
         tls_helper::{AllowListServerVerifier, Cert},
         BrokerApiClient, BrokerConfig, Message,
@@ -148,13 +149,7 @@ impl BrokerClientAsync {
     ) -> Result<bool, BrokerError> {
         let client = self.get_or_connect().await?;
 
-        if msg.len() > (self.msg_config.max_frame_size_kb - 4) * 1024 {
-            // 4 for encoding overhead
-            return Err(BrokerError::MessageTooLarge(
-                self.msg_config.max_frame_size_kb - 4,
-                msg.len() / 1024,
-            ));
-        }
+        ensure_msg_fits(&msg, &self.msg_config)?;
 
         Ok(client
             .send(context::current(), from_id, dest, msg)
@@ -165,13 +160,7 @@ impl BrokerClientAsync {
         let client = self.get_or_connect().await?;
         let msg = client.get(context::current(), dest).await??;
         if let Some(ref m) = msg {
-            if m.msg.len() > (self.msg_config.max_frame_size_kb - 4) * 1024 {
-                // 4 for encoding overhead
-                return Err(BrokerError::MessageTooLarge(
-                    self.msg_config.max_frame_size_kb - 4,
-                    m.msg.len() / 1024,
-                ));
-            }
+            ensure_msg_fits(&m.msg, &self.msg_config)?;
         }
         Ok(msg)
     }

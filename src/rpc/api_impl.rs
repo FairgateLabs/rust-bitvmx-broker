@@ -4,6 +4,7 @@ use crate::{
     identification::{identifier::Identifier, routing::RoutingTable},
     rpc::{
         config::{MsgSizeConfig, QueueConfig},
+        ensure_msg_fits,
         errors::{BrokerRpcError, MutexExt},
         rate_limiter::RateLimiterManager,
         BrokerApi,
@@ -75,14 +76,7 @@ impl BrokerApi for BrokerApiImpl {
             warn!("Routing denied: {} cannot send to {}", from, dest);
             return Ok(false);
         }
-        if msg.len() > (self.msg_size_config.max_frame_size_kb - 4) * 1024 {
-            // 4 for encoding overhead
-            warn!("Message too large: {} bytes", msg.len());
-            return Err(BrokerRpcError::MessageTooLarge(
-                self.msg_size_config.max_frame_size_kb - 4,
-                msg.len() / 1024,
-            ));
-        }
+        ensure_msg_fits(&msg, &self.msg_size_config)?;
 
         // Check queue depth. If the queue is full, reject the message.
         let queue_depth = self.storage.get_count_for_identifier(&from, &dest)?;
