@@ -1,13 +1,17 @@
 use tokio::runtime::Runtime;
 
 use crate::{
-    identification::{allow_list::AllowList, identifier::Identifier},
+    identification::{
+        allow_list::AllowList,
+        identifier::{Identifier, PubkHash},
+    },
     rpc::{
         client::BrokerClient,
         errors::{BrokerError, MutexExt},
         tls_helper::Cert,
         BrokerConfig, Message,
     },
+    settings::SERVER_ID,
 };
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +19,7 @@ use std::sync::{Arc, Mutex};
 pub struct RemoteChannel {
     client: BrokerClient,
     my_id: Identifier,
-    dest_id: Identifier, // Identifier of the destination
+    server_id: Identifier, // The broker itself
 }
 
 impl RemoteChannel {
@@ -25,20 +29,18 @@ impl RemoteChannel {
         my_cert: Cert,
         my_id: Option<u8>,
         allow_list: Arc<Mutex<AllowList>>,
+        server_pubk_hash: PubkHash,
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
         let client = BrokerClient::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
             pubkey_hash: my_cert.get_pubk_hash()?,
             id: my_id.unwrap_or(0), // Default to 0 if not provided
         };
-        let dest_id = Identifier {
-            pubkey_hash: config.get_pubk_hash(),
-            id: config.get_id(),
-        };
+        let server_id = Identifier::new(server_pubk_hash, SERVER_ID);
         Ok(Self {
             client,
             my_id,
-            dest_id,
+            server_id,
         })
     }
 
@@ -47,6 +49,7 @@ impl RemoteChannel {
         my_cert: Cert,
         my_id: Option<u8>,
         allow_list: Arc<Mutex<AllowList>>,
+        server_pubk_hash: PubkHash,
         rt: Arc<Mutex<Runtime>>,
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
         let client = BrokerClient::new_with_runtime(config, my_cert.clone(), allow_list, rt)?;
@@ -54,14 +57,11 @@ impl RemoteChannel {
             pubkey_hash: my_cert.get_pubk_hash()?,
             id: my_id.unwrap_or(0), // Default to 0 if not provided
         };
-        let dest_id = Identifier {
-            pubkey_hash: config.get_pubk_hash(),
-            id: config.get_id(),
-        };
+        let server_id = Identifier::new(server_pubk_hash, SERVER_ID);
         Ok(Self {
             client,
             my_id,
-            dest_id,
+            server_id,
         })
     }
 
@@ -69,6 +69,7 @@ impl RemoteChannel {
     pub fn new_simple(
         config: &BrokerConfig,
         my_id: u8,
+        server_pubk_hash: PubkHash,
     ) -> Result<(Self, Identifier), crate::rpc::errors::BrokerError> {
         let my_cert = Cert::new()?;
         let allow_list = AllowList::new();
@@ -80,7 +81,7 @@ impl RemoteChannel {
             id: my_id,
         };
         Ok((
-            Self::new(config, my_cert, Some(my_id), allow_list)?,
+            Self::new(config, my_cert, Some(my_id), allow_list, server_pubk_hash)?,
             my_identifier,
         ))
     }
@@ -93,10 +94,10 @@ impl RemoteChannel {
         self.client.send_msg(self.my_id.id, dest.clone(), msg)
     }
 
-    // Dest is the identifier in config
+    // Addresses the broker itself, built from the server hash given at construction.
     pub fn send_server(&self, msg: String) -> Result<bool, crate::rpc::errors::BrokerError> {
         self.client
-            .send_msg(self.my_id.id, self.dest_id.clone(), msg)
+            .send_msg(self.my_id.id, self.server_id.clone(), msg)
     }
 
     pub fn get(&self) -> Result<Option<Message>, crate::rpc::errors::BrokerError> {

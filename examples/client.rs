@@ -55,12 +55,7 @@ fn main() -> anyhow::Result<()> {
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
     let config = BrokerSettings::new("config/broker_settings.yaml").unwrap();
     let client = BrokerClient::new(
-        &BrokerConfig::new(
-            flags.port,
-            Some(flags.ip_addr),
-            cert.get_pubk_hash().unwrap(),
-            Some(config),
-        ),
+        &BrokerConfig::new(flags.port, Some(flags.ip_addr), Some(config)),
         cert,
         allow_list,
     )

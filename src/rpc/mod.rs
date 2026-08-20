@@ -35,72 +35,48 @@ pub(crate) trait BrokerApi {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BrokerConfig {
-    port: u16,
-    ip: IpAddr,
-    listen_ip: IpAddr,
-    pubk_hash: String,
+    server_port: u16,
+    server_ip: Option<IpAddr>,
     broker_settings: BrokerSettings,
 }
 
 impl BrokerConfig {
     pub fn new(
-        port: u16,
-        ip: Option<IpAddr>,
-        pubk_hash: String,
+        server_port: u16,
+        server_ip: Option<IpAddr>,
         broker_settings: Option<BrokerSettings>,
     ) -> Self {
         Self {
-            port,
-            ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
-            pubk_hash,
+            server_port,
+            server_ip,
             broker_settings: broker_settings.unwrap_or_default(),
         }
     }
 
     // Do not use in production, this is for testing purposes
     pub fn new_only_address(
-        port: u16,
-        ip: Option<IpAddr>,
+        server_port: u16,
+        server_ip: Option<IpAddr>,
     ) -> Result<(Self, Identifier, Cert), BrokerError> {
         let cert = Cert::new()?;
-        let pubk_hash = cert.get_pubk_hash()?;
-
-        let identifier = Identifier {
-            pubkey_hash: pubk_hash.clone(),
-            id: SERVER_ID,
-        };
-        Ok((
-            Self {
-                port,
-                ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-                listen_ip: ip.unwrap_or(IpAddr::V4(Ipv4Addr::from([0, 0, 0, 0]))),
-                pubk_hash,
-                broker_settings: BrokerSettings::default(),
-            },
-            identifier,
-            cert,
-        ))
+        let identifier = Identifier::new(cert.get_pubk_hash()?, SERVER_ID);
+        Ok((Self::new(server_port, server_ip, None), identifier, cert))
     }
 
-    pub fn get_pubk_hash(&self) -> String {
-        self.pubk_hash.clone()
+    /// Where the server listens. An unspecified address means every interface.
+    pub fn bind_addr(&self) -> SocketAddr {
+        SocketAddr::new(
+            self.server_ip.unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            self.server_port,
+        )
     }
 
-    pub fn get_id(&self) -> u8 {
-        SERVER_ID
-    }
-
-    pub fn get_port(&self) -> u16 {
-        self.port
-    }
-
-    pub fn get_address(&self) -> SocketAddr {
-        SocketAddr::new(self.ip, self.port)
-    }
-
-    pub fn get_ip(&self) -> IpAddr {
-        self.ip
+    /// Where a client connects. An unspecified address means this machine.
+    pub fn dial_addr(&self) -> SocketAddr {
+        SocketAddr::new(
+            self.server_ip.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            self.server_port,
+        )
     }
 
     pub fn get_settings(&self) -> BrokerSettings {
