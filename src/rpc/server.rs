@@ -56,10 +56,15 @@ impl BrokerServer {
         let rt = Runtime::new()?;
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
-        let listener = rt.block_on(TcpListener::bind(config.bind_addr()))?;
+        let listener = rt
+            .block_on(TcpListener::bind(config.bind_addr()))
+            .map_err(BrokerError::BindError)?;
         info!(
             "Listening with TLS on port {}",
-            listener.local_addr()?.port()
+            listener
+                .local_addr()
+                .map_err(BrokerError::BindError)?
+                .port()
         );
 
         let handler = ConnectionHandler::new(config, cert, storage.clone(), allow_list, routing)?;

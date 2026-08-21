@@ -1,4 +1,4 @@
-use crate::rpc::errors::{BrokerRpcError, FromMutexError};
+use crate::rpc::errors::{BrokerRpcError, FromMutexError, Severity};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -14,6 +14,20 @@ pub enum BrokerStorageError {
 
     #[error("Invalid identifier in key: {0}")]
     InvalidIdentifier(String),
+}
+
+impl BrokerStorageError {
+    pub fn severity(&self) -> Severity {
+        match self {
+            BrokerStorageError::MutexPoisoned => Severity::Fatal,
+            // One unreadable row, or one input that never should have been keyed.
+            BrokerStorageError::MalformedKey(_) | BrokerStorageError::InvalidIdentifier(_) => {
+                Severity::NonFatal
+            }
+            // The backend reports a missing key and an unopenable database through one type. All of it is considered non-fatal.
+            BrokerStorageError::Backend(_) => Severity::NonFatal,
+        }
+    }
 }
 
 impl FromMutexError for BrokerStorageError {

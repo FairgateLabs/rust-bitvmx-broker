@@ -4,22 +4,38 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// Storage is gone, a lock is poisoned, or the configuration is invalid. Nothing can proceed.
+    Fatal,
+    /// One message or one peer was refused or failed. Keep serving.
+    NonFatal,
+    /// The caller misused the API.
+    Programming,
+}
+
+impl Severity {
+    pub fn is_fatal(&self) -> bool {
+        !matches!(self, Severity::NonFatal)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum BrokerError {
     #[error("Rpc error")]
     RpcError(#[from] tarpc::client::RpcError),
 
-    #[error("IO error")]
-    IoError(#[from] std::io::Error),
+    #[error("Failed to reach a peer: {0}")]
+    ConnectError(#[from] std::io::Error),
+
+    #[error("Failed to bind the listener: {0}")]
+    BindError(std::io::Error),
 
     #[error("Serialization error {0}")]
     SerdeSerializationError(#[from] serde_json::Error),
 
     #[error("Identification error: {0}")]
     IdentificationError(#[from] identification::errors::IdentificationError),
-
-    #[error("Error parsing int")]
-    ParseIntError(#[from] std::num::ParseIntError),
 
     #[error("Broker client is disconnected")]
     Disconnected,
@@ -36,14 +52,8 @@ pub enum BrokerError {
     #[error("Broker storage error: {0}")]
     BrokerStorageError(#[from] storage::BrokerStorageError),
 
-    #[error("Failed to get address: {0}")]
+    #[error("Failed to get the peer address: {0}")]
     AddressError(#[from] std::net::AddrParseError),
-
-    #[error("Invalid identifier: {0}")]
-    InvalidIdentifier(String),
-
-    #[error("Closed channel")]
-    ClosedChannel,
 
     #[error("Mutex error: {0}")]
     MutexError(String),
@@ -78,17 +88,61 @@ pub enum BrokerError {
     #[error("Operation not available on a node built in {0} mode")]
     WrongNodeMode(String),
 
+    #[error("Cannot create a local channel to the node's own local_id")]
+    LocalChannelForOwnId,
+
     #[error("Time error: {0}")]
     TimeError(#[from] std::time::SystemTimeError),
 
     #[error("Retry policy error: {0}")]
     RetryPolicyError(#[from] RetryPolicyError),
 
-    #[error("Other error: {0}")]
-    Other(String),
-
     #[error("Setting file error: {0}")]
     Settings(#[from] ConfigError),
+}
+
+impl BrokerError {
+    pub fn severity(&self) -> Severity {
+        match self {
+            // Only a constructor reaches these.
+            BrokerError::BindError(_)
+            | BrokerError::RcgenError(_)
+            | BrokerError::RsaError(_)
+            | BrokerError::InvalidPrivateKey(_)
+            | BrokerError::X509ParseError(_)
+            | BrokerError::MutexError(_)
+            | BrokerError::Settings(_) => Severity::Fatal,
+
+            BrokerError::WrongNodeMode(_) | BrokerError::LocalChannelForOwnId => {
+                Severity::Programming
+            }
+
+            // Delegated.
+            BrokerError::BrokerRpcError(e) => e.severity(),
+            BrokerError::BrokerStorageError(e) => e.severity(),
+            BrokerError::IdentificationError(e) => e.severity(),
+            BrokerError::RetryPolicyError(e) => e.severity(),
+
+            // One message, one row, one peer, or on every dial.
+            BrokerError::AboutCertsAllow(_) // Considering certificate rotation.
+            | BrokerError::TlsError(_)
+            | BrokerError::RustlsError(_)
+            | BrokerError::PemParseError(_)
+            | BrokerError::RpcError(_)
+            | BrokerError::ConnectError(_)
+            | BrokerError::AddressError(_)
+            | BrokerError::Disconnected
+            | BrokerError::UnauthorizedFingerprint(_)
+            | BrokerError::SerdeSerializationError(_)
+            | BrokerError::MessageTooLarge(_, _)
+            | BrokerError::InvalidMessageContext { .. }
+            | BrokerError::TimeError(_) => Severity::NonFatal,
+        }
+    }
+
+    pub fn is_fatal(&self) -> bool {
+        self.severity().is_fatal()
+    }
 }
 
 impl<T> From<PoisonError<T>> for BrokerError {
@@ -113,6 +167,23 @@ pub enum BrokerRpcError {
 
     #[error("Queue for {0} is full, it already holds {1} messages")]
     QueueFull(String, u64),
+}
+
+impl BrokerRpcError {
+    pub fn severity(&self) -> Severity {
+        match self {
+            BrokerRpcError::MutexError(_) => Severity::Fatal,
+
+            BrokerRpcError::ParseError(_)
+            | BrokerRpcError::MessageTooLarge(_, _)
+            | BrokerRpcError::RateLimitExceeded
+            | BrokerRpcError::QueueFull(_, _) => Severity::NonFatal,
+        }
+    }
+
+    pub fn is_fatal(&self) -> bool {
+        self.severity().is_fatal()
+    }
 }
 
 pub trait FromMutexError {

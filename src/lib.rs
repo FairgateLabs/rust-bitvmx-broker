@@ -11,4 +11,5 @@ pub use channel::remote::RemoteChannel;
 pub use node::{BrokerNode, ReceivedMessage};
 pub use rpc::client::BrokerClient;
 pub use rpc::client_async::BrokerClientAsync;
+pub use rpc::errors::{BrokerError, Severity};
 pub use rpc::server::BrokerServer;

@@ -34,7 +34,6 @@ use crate::{
 #[derive(Debug)]
 pub enum ReceivedMessage {
     Msg(Identifier, String), //Id, Msg
-    Error(BrokerError),
 }
 
 // What the node was built for. Peers talk to other brokers over the network, services hand messages
@@ -254,9 +253,7 @@ impl BrokerNode {
     pub fn create_local_channel(&self, id: Identifier) -> Result<LocalChannel, BrokerError> {
         self.require_mode(NodeMode::Services)?;
         if id == self.local_id {
-            return Err(BrokerError::Other(
-                "Cannot create a local channel to the node's own local_id".to_string(),
-            ));
+            return Err(BrokerError::LocalChannelForOwnId);
         }
         Ok(self.server.create_local_channel(id))
     }
@@ -301,6 +298,23 @@ impl BrokerNode {
         self.local_channel.send(dest, data)
     }
 
+    /// Removes a row that could not be read, before the error travels.
+    /// A row left in place is read again on the next tick and fails the same way, so the queue never
+    /// drains past it.
+    fn discard_row_on_err<T, E>(&self, key: &str, result: Result<T, E>) -> Result<T, BrokerError>
+    where
+        BrokerError: From<E>,
+    {
+        match result {
+            Ok(value) => Ok(value),
+            Err(e) => {
+                warn!("Discarding unreadable key {}", key);
+                self.storage.remove(key)?;
+                Err(e.into())
+            }
+        }
+    }
+
     fn process_out_queue(&self) -> Result<(), BrokerError> {
         // send up to 50% of max capacity messages per tick
         let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
@@ -313,14 +327,16 @@ impl BrokerNode {
 
         for key in self.storage.sorted_keys(&QueueType::OutQueue, None)? {
             if let Some(raw) = self.storage.get(&key)? {
-                let (pubk_hash, address) = BrokerNodeStorage::dest_from_key(&key)?;
+                let (pubk_hash, address) =
+                    self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?;
 
                 // check if destination has not exceeded max messages per tick by destination pubk_hash
                 let sent = sent_per_dest.entry(pubk_hash.clone()).or_insert(0);
                 if *sent >= max_per_dest {
                     continue; // destination exhausted for this tick
                 }
-                let mut msg: OutgoingMsg = serde_json::from_str(&raw)?;
+                let mut msg: OutgoingMsg =
+                    self.discard_row_on_err(&key, serde_json::from_str(&raw))?;
                 if msg.retry.is_ready(now) == false {
                     continue;
                 }
@@ -339,11 +355,14 @@ impl BrokerNode {
                     self.storage.remove(&key)?;
                     *sent += 1;
                 } else {
+                    // Ok(false) is the broker refusing the route.
+                    let reason = match &attempt_to_send {
+                        Ok(_) => "routing denied".to_string(),
+                        Err(e) => e.to_string(),
+                    };
                     warn!(
                         "Failed to send queued message to {} at {}: {}",
-                        pubk_hash,
-                        address,
-                        attempt_to_send.as_ref().err().unwrap()
+                        pubk_hash, address, reason
                     );
 
                     msg.retry.record_attempt(&self.retry_policy, now);
@@ -444,14 +463,17 @@ impl BrokerNode {
             if let Some(x) = self.storage.get(&key)? {
                 let (identifier, data, ctx) = match queue_type {
                     QueueType::InQueue => {
-                        let identifier = BrokerNodeStorage::sender_from_key(&key)?;
+                        let identifier = self
+                            .discard_row_on_err(&key, BrokerNodeStorage::sender_from_key(&key))?;
                         (identifier, x, None)
                     }
                     QueueType::DeadLetterQueue => {
                         // No receiver id in deadletter, use COMMS_ID as default
-                        let (pubk_hash, _) = BrokerNodeStorage::dest_from_key(&key)?;
+                        let (pubk_hash, _) =
+                            self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?;
                         let identifier = Identifier::new(pubk_hash, COMMS_ID);
-                        let msg = serde_json::from_str::<OutgoingMsg>(&x)?;
+                        let msg =
+                            self.discard_row_on_err(&key, serde_json::from_str::<OutgoingMsg>(&x))?;
                         (identifier, msg.payload, Some(msg.ctx))
                     }
                     _ => continue,
@@ -707,7 +729,6 @@ mod tests {
                     assert_eq!(data, &expected_msgs[i]);
                     assert_eq!(identifier.pubkey_hash, expected_pubk_hashes[i]);
                 }
-                _ => panic!("Expected message"),
             }
         }
     }
@@ -901,7 +922,6 @@ mod tests {
                 ReceivedMessage::Msg(_, data) => {
                     assert_eq!(data, &sent_msgs[i], "Message order violated at index {}", i);
                 }
-                _ => panic!("Expected Msg"),
             }
         }
 
@@ -982,7 +1002,6 @@ mod tests {
             .chain(recv1_second.into_iter())
             .map(|msg| match msg {
                 ReceivedMessage::Msg(_, data) => data,
-                _ => panic!("Unexpected error"),
             })
             .collect();
         let recv2_all: Vec<String> = recv2_first
@@ -990,7 +1009,6 @@ mod tests {
             .chain(recv2_second.into_iter())
             .map(|msg| match msg {
                 ReceivedMessage::Msg(_, data) => data,
-                _ => panic!("Unexpected error"),
             })
             .collect();
         assert_eq!(recv1_all, sent_msgs_r1);
@@ -1043,7 +1061,6 @@ mod tests {
                         assert_eq!(data, &msg);
                         assert_eq!(ctx, CTX);
                     }
-                    _ => panic!("Expected dead letter message"),
                 }
                 break;
             }
