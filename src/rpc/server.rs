@@ -4,7 +4,7 @@ use crate::storage::BrokerServerStorage;
 use crate::{
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
-        config::MsgSizeConfig,
+        config::{MsgSizeConfig, QueueConfig},
         errors::{BrokerError, MutexExt},
         rate_limiter::RateLimiterManager,
         tls_helper::{AllowListClientVerifier, Cert},
@@ -114,6 +114,7 @@ struct ConnectionHandler {
     routing: Arc<Mutex<RoutingTable>>,
     rate_limiter: Arc<RateLimiterManager>,
     msg_size_config: MsgSizeConfig,
+    queue_config: QueueConfig,
     cancel: CancellationToken,
 }
 
@@ -152,6 +153,7 @@ impl ConnectionHandler {
             routing,
             rate_limiter: Arc::new(RateLimiterManager::new(settings.rate_limiter_config)),
             msg_size_config: settings.msg_size_config,
+            queue_config: settings.queue_config,
             cancel: CancellationToken::new(),
         })
     }
@@ -231,6 +233,7 @@ impl ConnectionHandler {
                     self.routing.clone(),
                     self.rate_limiter.clone(),
                     self.msg_size_config.clone(),
+                    self.queue_config.clone(),
                 )
                 .serve(),
             )

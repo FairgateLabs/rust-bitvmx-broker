@@ -1,9 +1,9 @@
 // The BrokerServerStorage uses one key to store the uid and multiple keys to store the messages.
 // The key "broker/uid" stores the current uid.
 // The keys "broker/msgs/{dest}/{uid}/{from}" store the messages.
+// The key "broker/count/{from}/{dest}" stores how many messages that sender has waiting for that destination.
 // To list the messages for an specific destination, we use the partial_compare_keys
 //     method to get all the keys that start with "broker/msgs/{dest}/".
-// Then we sort the keys get the oldest message (as uid is incremental).
 // To get the info for the message, we split the key and get the uid and from fields.
 
 use crate::identification::identifier::{validate_pubkey_hash, Identifier};
@@ -18,6 +18,7 @@ use storage_backend::{
 
 const UID_KEY: &str = "broker/uid";
 const MSGS_PREFIX: &str = "broker/msgs";
+const COUNT_PREFIX: &str = "broker/count";
 
 #[derive(Clone)]
 pub struct BrokerServerStorage {
@@ -38,6 +39,12 @@ impl BrokerServerStorage {
 
     fn msgs_prefix(dest: &Identifier) -> String {
         format!("{MSGS_PREFIX}/{dest}/")
+    }
+
+    fn count_key(from: &Identifier, dest: &Identifier) -> Result<String, BrokerStorageError> {
+        validate_pubkey_hash(&from.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
+        validate_pubkey_hash(&dest.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
+        Ok(format!("{COUNT_PREFIX}/{from}/{dest}"))
     }
 
     fn msg_key(
@@ -69,15 +76,37 @@ impl BrokerServerStorage {
         Ok((uid, from))
     }
 
+    /// How many messages from one sender are waiting for a specific destination.
+    pub fn get_count_for_identifier(
+        &self,
+        from: &Identifier,
+        dest: &Identifier,
+    ) -> Result<u64, BrokerStorageError> {
+        let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
+        Ok(storage
+            .get(&Self::count_key(from, dest)?, None)?
+            .unwrap_or(0))
+    }
+
+    // The oldest message waiting for dest.
     pub fn get(&self, dest: Identifier) -> Result<Option<Message>, BrokerStorageError> {
-        Ok(self.get_all(dest)?.into_iter().next())
+        let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
+        let keys = storage.partial_compare_keys(&Self::msgs_prefix(&dest), None)?;
+        let Some(key) = keys.first() else {
+            return Ok(None);
+        };
+        let Some(msg) = storage.get(key, None)? else {
+            return Ok(None);
+        };
+        let (uid, from) = Self::decode_key(key)?;
+        Ok(Some(Message { uid, from, msg }))
     }
 
     // Messages waiting for dest, oldest first.
     pub fn get_all(&self, dest: Identifier) -> Result<Vec<Message>, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
-        let mut keys = storage.partial_compare_keys(&Self::msgs_prefix(&dest), None)?;
-        keys.sort();
+        // Already ordered by uid.
+        let keys = storage.partial_compare_keys(&Self::msgs_prefix(&dest), None)?;
 
         let mut messages = Vec::new();
         for key in keys {
@@ -100,8 +129,17 @@ impl BrokerServerStorage {
             return Ok(false);
         }
 
+        // The sender is part of the key, so the pair whose count drops is read back out of it.
+        let (_, from) = Self::decode_key(&keys[0])?;
+        let count_key = Self::count_key(&from, &dest)?;
+        let count: u64 = storage.get(&count_key, None)?.unwrap_or(0);
+
         let tx = storage.begin_transaction();
-        match storage.remove(&keys[0], Some(tx)) {
+        let removed = storage
+            .remove(&keys[0], Some(tx))
+            .and_then(|_| storage.set(&count_key, count.saturating_sub(1), Some(tx)));
+
+        match removed {
             Ok(()) => {
                 storage.commit_transaction(tx)?;
                 Ok(true)
@@ -121,14 +159,18 @@ impl BrokerServerStorage {
     ) -> Result<(), BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
 
+        let count_key = Self::count_key(&from, &dest)?;
+        let count: u64 = storage.get(&count_key, None)?.unwrap_or(0);
+
         let uid: u64 = storage.get(UID_KEY, None)?.unwrap_or(0) + 1;
         let key = Self::msg_key(&dest, uid, &from)?;
 
-        // The new uid and the message it names are written together.
+        // The new uid, the message it names and the count of stored messages are written together.
         let tx = storage.begin_transaction();
         let written = storage
             .set(UID_KEY, uid, Some(tx))
-            .and_then(|_| storage.set(&key, msg, Some(tx)));
+            .and_then(|_| storage.set(&key, msg, Some(tx)))
+            .and_then(|_| storage.set(&count_key, count + 1, Some(tx)));
 
         match written {
             Ok(()) => Ok(storage.commit_transaction(tx)?),

@@ -110,6 +110,9 @@ pub enum BrokerRpcError {
 
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
+
+    #[error("Queue for {0} is full, it already holds {1} messages")]
+    QueueFull(String, u64),
 }
 
 pub trait FromMutexError {

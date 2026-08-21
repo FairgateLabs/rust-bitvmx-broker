@@ -167,9 +167,12 @@ impl RoutingTable {
     /// Remove all routes to a destination Identifier
     pub fn remove_all_to(&mut self, to: &Identifier) -> Result<(), IdentificationError> {
         let to_rule = RouteIdentifier::from(to);
-        for set in self.routes_mut()?.values_mut() {
+        let routes = self.routes_mut()?;
+        for set in routes.values_mut() {
             set.retain(|route| route != &to_rule);
         }
+        // A source left with no destinations is dropped.
+        routes.retain(|_, set| !set.is_empty());
         Ok(())
     }
 

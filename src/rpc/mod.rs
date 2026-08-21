@@ -1,14 +1,15 @@
 use crate::{
     identification::identifier::Identifier,
     rpc::{
-        config::BrokerSettings,
+        config::{BrokerSettings, MsgSizeConfig},
         errors::{BrokerError, BrokerRpcError},
         tls_helper::Cert,
     },
-    settings::SERVER_ID,
+    settings::{FRAME_ENVELOPE_RESERVE_KB, SERVER_ID},
 };
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use tracing::warn;
 pub(crate) mod api_impl;
 pub mod client;
 pub mod client_async;
@@ -82,4 +83,24 @@ impl BrokerConfig {
     pub fn get_settings(&self) -> BrokerSettings {
         self.broker_settings.clone()
     }
+}
+
+/// Refuses a payload that would not fit in a frame. The payload travels as a JSON string.
+pub(crate) fn ensure_msg_fits(msg: &str, config: &MsgSizeConfig) -> Result<(), BrokerRpcError> {
+    let budget = config
+        .max_frame_size_kb
+        .saturating_sub(FRAME_ENVELOPE_RESERVE_KB)
+        * 1024;
+    let needed = serde_json::to_string(msg)
+        .map_err(|e| BrokerRpcError::ParseError(e.to_string()))?
+        .len();
+
+    if needed > budget {
+        warn!("Message too large: {} bytes encoded", needed);
+        return Err(BrokerRpcError::MessageTooLarge(
+            budget / 1024,
+            needed.div_ceil(1024),
+        ));
+    }
+    Ok(())
 }
