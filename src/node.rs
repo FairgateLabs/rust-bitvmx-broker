@@ -298,19 +298,19 @@ impl BrokerNode {
         self.local_channel.send(dest, data)
     }
 
-    /// Removes a row that could not be read, before the error travels.
-    /// A row left in place is read again on the next tick and fails the same way, so the queue never
-    /// drains past it.
-    fn discard_row_on_err<T, E>(&self, key: &str, result: Result<T, E>) -> Result<T, BrokerError>
-    where
-        BrokerError: From<E>,
-    {
+    /// Removes a row that could not be read and reports it as absent, so the caller skips it and
+    /// keeps going.
+    fn discard_row_on_err<T, E: std::fmt::Display>(
+        &self,
+        key: &str,
+        result: Result<T, E>,
+    ) -> Result<Option<T>, BrokerError> {
         match result {
-            Ok(value) => Ok(value),
+            Ok(value) => Ok(Some(value)),
             Err(e) => {
-                warn!("Discarding unreadable key {}", key);
+                warn!("Discarding unreadable row {}: {}", key, e);
                 self.storage.remove(key)?;
-                Err(e.into())
+                Ok(None)
             }
         }
     }
@@ -327,16 +327,22 @@ impl BrokerNode {
 
         for key in self.storage.sorted_keys(&QueueType::OutQueue, None)? {
             if let Some(raw) = self.storage.get(&key)? {
-                let (pubk_hash, address) =
-                    self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?;
+                let Some((pubk_hash, address)) =
+                    self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?
+                else {
+                    continue;
+                };
 
                 // check if destination has not exceeded max messages per tick by destination pubk_hash
                 let sent = sent_per_dest.entry(pubk_hash.clone()).or_insert(0);
                 if *sent >= max_per_dest {
                     continue; // destination exhausted for this tick
                 }
-                let mut msg: OutgoingMsg =
-                    self.discard_row_on_err(&key, serde_json::from_str(&raw))?;
+                let Some(mut msg) =
+                    self.discard_row_on_err(&key, serde_json::from_str::<OutgoingMsg>(&raw))?
+                else {
+                    continue;
+                };
                 if msg.retry.is_ready(now) == false {
                     continue;
                 }
@@ -463,17 +469,26 @@ impl BrokerNode {
             if let Some(x) = self.storage.get(&key)? {
                 let (identifier, data, ctx) = match queue_type {
                     QueueType::InQueue => {
-                        let identifier = self
-                            .discard_row_on_err(&key, BrokerNodeStorage::sender_from_key(&key))?;
+                        let Some(identifier) = self
+                            .discard_row_on_err(&key, BrokerNodeStorage::sender_from_key(&key))?
+                        else {
+                            continue;
+                        };
                         (identifier, x, None)
                     }
                     QueueType::DeadLetterQueue => {
                         // No receiver id in deadletter, use COMMS_ID as default
-                        let (pubk_hash, _) =
-                            self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?;
+                        let Some((pubk_hash, _)) =
+                            self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?
+                        else {
+                            continue;
+                        };
                         let identifier = Identifier::new(pubk_hash, COMMS_ID);
-                        let msg =
-                            self.discard_row_on_err(&key, serde_json::from_str::<OutgoingMsg>(&x))?;
+                        let Some(msg) =
+                            self.discard_row_on_err(&key, serde_json::from_str::<OutgoingMsg>(&x))?
+                        else {
+                            continue;
+                        };
                         (identifier, msg.payload, Some(msg.ctx))
                     }
                     _ => continue,
@@ -1174,6 +1189,53 @@ mod tests {
         );
 
         assert!(receiver.check_receive(None).unwrap().is_empty());
+
+        sender.close();
+        receiver.close();
+        broker_node3.close();
+        drop(sender);
+        drop(receiver);
+        drop(broker_node3);
+        cleanup_storage(port, 3);
+    }
+
+    // A row that cannot be read is dropped and the drain carries on, so the messages behind it are delivered.
+    #[test]
+    fn test_unreadable_row_is_discarded_and_the_rest_arrive() {
+        let port = 12024;
+        cleanup_storage(port, 3);
+
+        let (mut sender, mut receiver, mut broker_node3) = get_broker_nodes(port);
+
+        let poison_key = format!(
+            "broker/inqueue/testqueue/msgs/0/{}/not-an-id",
+            sender.get_pubk_hash().unwrap()
+        );
+        receiver.storage.set(&poison_key, "unreadable").unwrap();
+
+        for i in 0..2u8 {
+            sender
+                .send_peer(
+                    CTX,
+                    &receiver.get_pubk_hash().unwrap(),
+                    receiver.get_address(),
+                    format!("msg-{}", i),
+                )
+                .unwrap();
+        }
+        sender.tick().unwrap();
+        receiver.tick().unwrap();
+
+        let received = receiver.check_receive(None).unwrap();
+        assert_msgs_received(
+            &received,
+            &vec!["msg-0".to_string(), "msg-1".to_string()],
+            &vec![sender.get_pubk_hash().unwrap(); 2],
+        );
+        assert!(
+            receiver.storage.get(&poison_key).unwrap().is_none(),
+            "the unreadable row should be removed, not retried on every tick"
+        );
 
         sender.close();
         receiver.close();
