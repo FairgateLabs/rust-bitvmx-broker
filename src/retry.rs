@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::info;
 
-use crate::rpc::config::BrokerNodeConfig;
+use crate::rpc::{config::BrokerNodeConfig, errors::Severity};
 
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
@@ -110,4 +110,10 @@ pub enum RetryPolicyError {
          (min: {min}, max: {max}, max_attempts: {attempts})"
     )]
     DelayRangeTooSmall { min: u64, max: u64, attempts: u8 },
+}
+
+impl RetryPolicyError {
+    pub fn severity(&self) -> Severity {
+        Severity::Fatal
+    }
 }

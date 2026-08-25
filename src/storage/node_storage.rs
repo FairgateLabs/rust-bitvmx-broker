@@ -10,6 +10,7 @@ use crate::storage::errors::BrokerStorageError;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use storage_backend::storage::{KeyValueStore, Storage};
+use tracing::warn;
 
 pub enum QueueType {
     OutQueue,
@@ -169,12 +170,20 @@ impl BrokerNodeStorage {
     pub fn store_in_msgs(&self, msgs: &[Message]) -> Result<(), BrokerStorageError> {
         let tx = self.storage.begin_transaction();
         for msg in msgs {
-            let key = self.msg_key(
+            let key = match self.msg_key(
                 &QueueType::InQueue,
                 msg.uid,
                 &msg.from.pubkey_hash,
                 &msg.from.id.to_string(),
-            )?;
+            ) {
+                Ok(key) => key,
+                Err(e) => {
+                    // Dropped rather than failing the batch. Failing would roll back every message
+                    // beside it and leave the whole batch unacknowledged.
+                    warn!("Dropping message from {}: {}", msg.from, e);
+                    continue;
+                }
+            };
             self.storage.set(&key, msg.msg.clone(), Some(tx))?;
         }
         self.storage.commit_transaction(tx)?;

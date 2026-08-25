@@ -1,3 +1,4 @@
+use crate::rpc::errors::Severity;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -20,4 +21,19 @@ pub enum IdentificationError {
     //std::string::String
     #[error("Failed to parse identifier: {0}")]
     InvalidIdentifier(String),
+}
+
+impl IdentificationError {
+    pub fn severity(&self) -> Severity {
+        match self {
+            // Allow lists and routing tables are read at startup, so anything wrong with one is a configuration problem.
+            IdentificationError::IoError(_)
+            | IdentificationError::YamlParseError(_)
+            | IdentificationError::JsonParseError(_)
+            | IdentificationError::InvalidRoutingLine(_)
+            | IdentificationError::InvalidIdentifier(_) => Severity::Fatal,
+            // Editing routes while the table is in AllowAll or OnlyTo mode.
+            IdentificationError::NotInTableMode => Severity::Programming,
+        }
+    }
 }

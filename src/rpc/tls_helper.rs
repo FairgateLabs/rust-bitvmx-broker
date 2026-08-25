@@ -84,15 +84,18 @@ impl Cert {
         })
     }
     pub fn from_key_file(key_path: &str) -> Result<Self, BrokerError> {
-        let key_pem = std::fs::read_to_string(key_path)?;
+        let key_pem =
+            std::fs::read_to_string(key_path).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
         Self::new_with_privk(&key_pem)
     }
 
     pub fn from_file(path: &str, name: &str) -> Result<Self, BrokerError> {
         let cert_path = format!("{path}/{name}.pem");
         let key_path = format!("{path}/{name}.key");
-        let cert_pem = std::fs::read_to_string(cert_path)?;
-        let key_pem = std::fs::read_to_string(key_path)?;
+        let cert_pem =
+            std::fs::read_to_string(cert_path).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
+        let key_pem =
+            std::fs::read_to_string(key_path).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
 
         let cert_blocks = pem::parse_many(&cert_pem)?;
         let first_cert_block = cert_blocks
@@ -173,9 +176,9 @@ impl Cert {
         bits: usize,
     ) -> Result<(), BrokerError> {
         let key = Self::generate_private_key(rng, bits)?;
-        std::fs::create_dir_all(path)?;
+        std::fs::create_dir_all(path).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
         let key_path = format!("{path}/{name}.key");
-        std::fs::write(key_path, key)?;
+        std::fs::write(key_path, key).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
         info!("Private key saved to {path}/{name}.key");
         Ok(())
     }
