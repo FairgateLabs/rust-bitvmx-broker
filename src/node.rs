@@ -436,7 +436,12 @@ impl BrokerNode {
     }
 
     fn process_in_queue(&self) -> Result<(), BrokerError> {
-        let incoming = self.local_channel.get_all()?;
+        let max_per_tick = self.max_msgs_per_tick(
+            self.broker_settings
+                .broker_node_config
+                .max_msgs_per_tick_utilization,
+        );
+        let incoming = self.local_channel.get_up_to(max_per_tick)?;
         self.storage.store_in_msgs(&incoming)?;
 
         if incoming.len() > 0 {

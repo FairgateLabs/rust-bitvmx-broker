@@ -102,11 +102,19 @@ impl BrokerServerStorage {
         Ok(Some(Message { uid, from, msg }))
     }
 
-    // Messages waiting for dest, oldest first.
-    pub fn get_all(&self, dest: Identifier) -> Result<Vec<Message>, BrokerStorageError> {
+    // Messages waiting for dest, oldest first. A max bounds how many are loaded, and it is applied to
+    // the key list before any value is read.
+    pub fn get_all(
+        &self,
+        dest: Identifier,
+        max: Option<usize>,
+    ) -> Result<Vec<Message>, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
         // Already ordered by uid.
-        let keys = storage.partial_compare_keys(&Self::msgs_prefix(&dest), None)?;
+        let mut keys = storage.partial_compare_keys(&Self::msgs_prefix(&dest), None)?;
+        if let Some(max) = max {
+            keys.truncate(max);
+        }
 
         let mut messages = Vec::new();
         for key in keys {
