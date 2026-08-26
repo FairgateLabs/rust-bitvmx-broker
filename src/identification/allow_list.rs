@@ -132,6 +132,7 @@ impl AllowList {
 #[cfg(test)]
 mod tests {
     use crate::identification::allow_list::AllowList;
+    use crate::rpc::tls_helper::Cert;
     use std::{fs, net::IpAddr};
     use tempfile::tempdir;
 
@@ -256,6 +257,43 @@ mod tests {
     fn test_format() {
         let yaml = vec!["pubk1: 127.0.0.1", "pubk2: ~"].join("\n");
         AllowList::parse_yaml(&yaml).expect("Failed to parse allow list");
+    }
+
+    #[test]
+    fn test_from_cert() {
+        let local_addr = addr_from_str("127.0.0.1").unwrap();
+        let other_addr = addr_from_str("127.0.0.2").unwrap();
+        let (kept, dropped) = (Cert::new().unwrap(), Cert::new().unwrap());
+        let (kept_hash, dropped_hash) = (
+            kept.get_pubk_hash().unwrap(),
+            dropped.get_pubk_hash().unwrap(),
+        );
+
+        // from_certs pins each certificate to the address given in the same position.
+        let allow_list = AllowList::from_certs(
+            vec![kept.clone(), dropped.clone()],
+            vec![local_addr, other_addr],
+        )
+        .unwrap();
+        let mut allow_list = allow_list.lock().unwrap();
+        assert!(!allow_list.is_allow_all());
+        assert!(allow_list.is_allowed(&kept_hash, local_addr));
+        assert!(allow_list.is_allowed(&dropped_hash, other_addr));
+        assert!(!allow_list.is_allowed(&dropped_hash, local_addr));
+
+        // Removing by certificate is how a rotated or revoked peer is taken out.
+        allow_list.remove_by_cert(&dropped).unwrap();
+        assert!(!allow_list.is_allowed_by_fingerprint(&dropped_hash));
+        assert!(allow_list.is_allowed(&kept_hash, local_addr));
+
+        // Removing one that is not there leaves the rest alone.
+        allow_list.remove_by_cert(&dropped).unwrap();
+        assert_eq!(allow_list.entries().len(), 1);
+
+        // And it can be admitted again, at a different address than before.
+        allow_list.add_by_cert(&dropped, local_addr).unwrap();
+        assert!(allow_list.is_allowed(&dropped_hash, local_addr));
+        assert!(!allow_list.is_allowed(&dropped_hash, other_addr));
     }
 
     fn addr_from_str(s: &str) -> Option<IpAddr> {

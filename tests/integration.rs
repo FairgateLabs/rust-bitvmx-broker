@@ -24,6 +24,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tarpc::client::RpcError;
+use tokio::runtime::Runtime;
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
@@ -786,18 +787,67 @@ fn test_local_channel() {
         prepare_server(port, &server.privk, allow_list.clone(), route_all());
     let user1 = prepare_client(port, &server.get_pkh(), &client1.privk, allow_list.clone());
 
+    let local_id = Identifier {
+        pubkey_hash: "local".to_string(),
+        id: 0,
+    };
+
+    // A local channel reaches a remote client the same way another client would.
     local_channel
         .send(&client1.get_identifier(), "Hello!".to_string())
         .unwrap();
     let msg = recv_and_ack(&user1).unwrap().unwrap();
     assert_eq!(msg.0, "Hello!");
+    assert_eq!(msg.1, local_id);
+
+    // A second destination on the same server, so the rest of the exchange stays local.
+    let bob_id = Identifier {
+        pubkey_hash: "bob".to_string(),
+        id: 0,
+    };
+    let bob = broker_server.create_local_channel(bob_id.clone());
+    assert!(bob.get().unwrap().is_none());
+    assert!(bob.get_all().unwrap().is_empty());
+    assert!(bob.recv().unwrap().is_none());
+
+    for text in ["first", "second", "third"] {
+        local_channel.send(&bob_id, text.to_string()).unwrap();
+    }
+
+    // get returns the oldest without removing it, so asking twice gives the same message.
+    let oldest = bob.get().unwrap().unwrap();
+    assert_eq!(oldest.msg, "first");
+    assert_eq!(oldest.from, local_id);
+    assert_eq!(bob.get().unwrap().unwrap().uid, oldest.uid);
+
+    // get_all returns every waiting message, oldest first.
     assert_eq!(
-        msg.1,
-        Identifier {
-            pubkey_hash: "local".to_string(),
-            id: 0,
-        }
+        bob.get_all()
+            .unwrap()
+            .iter()
+            .map(|m| m.msg.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first", "second", "third"]
     );
+
+    // Only an ack removes a message, and acking the same uid twice is not an error.
+    assert!(bob.ack(oldest.uid).unwrap());
+    assert!(!bob.ack(oldest.uid).unwrap());
+    assert_eq!(bob.get_all().unwrap().len(), 2);
+
+    // recv takes both steps at once, so the message is gone once it returns.
+    let (text, from) = bob.recv().unwrap().unwrap();
+    assert_eq!(text, "second");
+    assert_eq!(from, local_id);
+    assert_eq!(bob.get_all().unwrap().len(), 1);
+
+    // Each destination sees only its own queue.
+    local_channel
+        .send(&local_id, "to myself".to_string())
+        .unwrap();
+    assert_eq!(bob.get_all().unwrap().len(), 1);
+    assert_eq!(local_channel.get().unwrap().unwrap().msg, "to myself");
+
     broker_server.close();
     drop(broker_server);
     drop(local_channel);
@@ -1066,21 +1116,154 @@ fn test_readme_example() {
 
     let client1 = BrokerClient::new(&config, client1_cert, allow_list).unwrap();
 
+    // Cloning shares the connection, so the clone reads back what the original sent.
+    let reader = client1.clone();
+
     client1
         .send_msg(0, destination_identifier.clone(), "hello".to_string())
         .unwrap();
-    while let Some(msg) = client1
+    while let Some(msg) = reader
         .get_msg(destination_identifier.clone().id)
         .unwrap_or(None)
     {
         println!("{:?}", msg);
-        client1
+        reader
             .ack(destination_identifier.clone().id, msg.uid)
             .unwrap();
     }
 
     drop(client1);
     drop(_server);
+    cleanup_storage(port, 3);
+}
+
+#[test]
+fn test_remote_channel() {
+    let port = 10100;
+    cleanup_storage(port, 3);
+    let (server, client1, client2) = get_keys(port);
+    let allow_list = create_allow_list(vec![
+        server.get_identifier(),
+        client1.get_identifier(),
+        client2.get_identifier(),
+    ]);
+    let (mut broker_server, _) =
+        prepare_server(port, &server.privk, allow_list.clone(), route_all());
+
+    // The broker reads what send_server writes through a local channel on its own identifier.
+    let server_inbox = broker_server.create_local_channel(Identifier::new(server.get_pkh(), 0));
+
+    // Both channels share one runtime.
+    let rt = Arc::new(Mutex::new(Runtime::new().unwrap()));
+    let config = BrokerConfig::new(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)), None);
+    let user1 = RemoteChannel::new_with_runtime(
+        &config,
+        Cert::new_with_privk(&client1.privk).unwrap(),
+        None,
+        allow_list.clone(),
+        server.get_pkh(),
+        rt.clone(),
+    )
+    .unwrap();
+    let user2 = RemoteChannel::new_with_runtime(
+        &config,
+        Cert::new_with_privk(&client2.privk).unwrap(),
+        None,
+        allow_list.clone(),
+        server.get_pkh(),
+        rt,
+    )
+    .unwrap();
+
+    assert!(user2.get().unwrap().is_none());
+
+    user1
+        .send(&client2.get_identifier(), "hello".to_string())
+        .unwrap();
+
+    // get leaves the message in place until it is acked.
+    let msg = user2.get().unwrap().unwrap();
+    assert_eq!(msg.msg, "hello");
+    assert_eq!(msg.from, client1.get_identifier());
+    assert_eq!(user2.get().unwrap().unwrap().uid, msg.uid);
+    assert!(user2.ack(msg.uid).unwrap());
+    assert!(user2.get().unwrap().is_none());
+
+    // recv is the same pair of steps taken together.
+    user1
+        .send(&client2.get_identifier(), "again".to_string())
+        .unwrap();
+    let (text, from) = user2.recv().unwrap().unwrap();
+    assert_eq!(text, "again");
+    assert_eq!(from, client1.get_identifier());
+    assert!(user2.recv().unwrap().is_none());
+
+    // send_server addresses the broker itself rather than another client.
+    user1.send_server("for the broker".to_string()).unwrap();
+    let (text, from) = server_inbox.recv().unwrap().unwrap();
+    assert_eq!(text, "for the broker");
+    assert_eq!(from, client1.get_identifier());
+
+    // A client that does not have the broker on its own allow list refuses the server certificate
+    // during the handshake, so the send never reaches the broker.
+    let stranger = prepare_client(
+        port,
+        &server.get_pkh(),
+        &client2.privk,
+        create_allow_list(vec![client2.get_identifier()]),
+    );
+    assert!(stranger
+        .send(&client1.get_identifier(), "should not arrive".to_string())
+        .is_err());
+
+    broker_server.close();
+    drop(broker_server);
+    cleanup_storage(port, 3);
+}
+
+// The constructors marked as testing only exist so a test can stand a broker up without spelling
+// out an allow list, a routing table and a certificate. They are not used in production.
+#[test]
+fn test_testing_only_constructors() {
+    let port = 10110;
+    cleanup_storage(port, 3);
+
+    // Generates the certificate and reports the identity it produced, so no key has to be supplied.
+    let (config, server_id, server_cert) =
+        BrokerConfig::new_only_address(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST))).unwrap();
+    assert_eq!(server_id.pubkey_hash, server_cert.get_pubk_hash().unwrap());
+    assert_eq!(
+        config.dial_addr(),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+    );
+
+    // Accepts every peer and every route, which is what makes the clients below work with no setup.
+    let mut broker_server =
+        BrokerServer::new_simple(&config, &storage_path(port), server_cert.clone()).unwrap();
+    let server_inbox = broker_server.create_local_channel(server_id.clone());
+
+    // Each client brings its own certificate and its own permissive allow list.
+    let (user1, user1_id) =
+        RemoteChannel::new_simple(&config, 1, server_id.pubkey_hash.clone()).unwrap();
+    let (user2, user2_id) =
+        RemoteChannel::new_simple(&config, 2, server_id.pubkey_hash.clone()).unwrap();
+    assert_ne!(user1_id.pubkey_hash, user2_id.pubkey_hash);
+    assert_eq!(user1_id.id, 1);
+    assert_eq!(user2_id.id, 2);
+
+    user1.send(&user2_id, "hello".to_string()).unwrap();
+    let (text, from) = user2.recv().unwrap().unwrap();
+    assert_eq!(text, "hello");
+    assert_eq!(from, user1_id);
+
+    // The permissive routing table also lets a client address the broker itself.
+    user2.send_server("for the broker".to_string()).unwrap();
+    let (text, from) = server_inbox.recv().unwrap().unwrap();
+    assert_eq!(text, "for the broker");
+    assert_eq!(from, user2_id);
+
+    broker_server.close();
+    drop(broker_server);
     cleanup_storage(port, 3);
 }
 

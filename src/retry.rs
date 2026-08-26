@@ -117,3 +117,77 @@ impl RetryPolicyError {
         Severity::Fatal
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(min: u64, max: u64, attempts: u8) -> BrokerNodeConfig {
+        BrokerNodeConfig {
+            retry_min_delay_msecs: min,
+            retry_max_delay_msecs: max,
+            max_send_attempts: attempts,
+            ..Default::default()
+        }
+    }
+
+    /// Test that the retry policy behaves as expected, including the step size and exhaustion behavior.
+    #[test]
+    fn test_message_retries() {
+        // Four steps between 100 and 900, so each attempt waits 200 ms longer than the last.
+        let policy = RetryPolicy::new(&config(100, 900, 5)).unwrap();
+        assert_eq!(policy.step_ms, 200);
+        assert_eq!(policy.get_next_delay(0), 100);
+        assert_eq!(policy.get_next_delay(2), 500);
+        assert_eq!(policy.get_next_delay(4), 900);
+        assert_eq!(policy.get_next_delay(40), 900); // Past the last step the delay holds at the maximum instead of growing.
+
+        let now = 1_000;
+        let mut state = RetryState::new(now);
+        assert_eq!(state.get_attempts(), 0);
+        assert!(state.is_ready(now)); // A fresh message goes out on the first tick.
+        assert!(!policy.is_exhausted(&state));
+
+        state.record_attempt(&policy, now);
+        assert_eq!(state.get_attempts(), 1);
+        assert!(!state.is_ready(now + 99)); // Still inside the first delay.
+        assert!(state.is_ready(now + 100));
+
+        while !policy.is_exhausted(&state) {
+            state.record_attempt(&policy, now);
+        }
+        assert_eq!(state.get_attempts(), policy.max_attempts);
+
+        assert!(now_ms().unwrap() > 0);
+    }
+
+    /// Test that invalid retry configurations are rejected with the expected error and severity.
+    #[test]
+    fn test_invalid_retry_configurations() {
+        let rejected = [
+            // Inverted bounds.
+            RetryPolicy::new(&config(900, 100, 5)).unwrap_err(),
+            // A single attempt leaves no steps to spread the delay over.
+            RetryPolicy::new(&config(100, 900, 1)).unwrap_err(),
+            // Four steps do not fit in a range of three milliseconds.
+            RetryPolicy::new(&config(100, 103, 5)).unwrap_err(),
+        ];
+        assert!(matches!(
+            rejected[0],
+            RetryPolicyError::MinGreaterThanMax { .. }
+        ));
+        assert!(matches!(
+            rejected[1],
+            RetryPolicyError::InvalidMaxAttempts(1)
+        ));
+        assert!(matches!(
+            rejected[2],
+            RetryPolicyError::DelayRangeTooSmall { .. }
+        ));
+
+        // A broker cannot serve with a retry policy it could not build.
+        for error in rejected {
+            assert_eq!(error.severity(), Severity::Fatal, "{error}");
+        }
+    }
+}
