@@ -48,7 +48,7 @@ Steps 1 and 2 are the server and happen for any broker. Steps 3 and 4 are `Broke
 
 1. The sender's broker connects and authenticates. This runs on the listener's own runtime, with no tick involved.
 2. The receiving server checks the request against its limits and its routing table, then writes the message into server storage under the destination it names.
-3. The receiving node's next `tick` moves everything addressed to its own identifier into the incoming queue and acknowledges it on the server side.
+3. The receiving node's next `tick` moves what is addressed to its own identifier into the incoming queue and acknowledges it on the server side. A tick takes at most a fixed number, so a large backlog is collected over several ticks rather than all at once.
 4. `check_receive` hands those messages to the caller.
 
 ## Inside a tick
@@ -91,7 +91,7 @@ The distinction matters because a refused message and an unusable process arrive
 | `rate_limiter_config` | `rate_limit_capacity` | Requests one sender may make before it has to wait. | Any receiving broker |
 | | `rate_limit_refill_rate` | How fast that budget returns, per second. | Any receiving broker |
 | | `tokens_per_message` | Requests charged per message sent. | Any receiving broker |
-| `broker_node_config` | `max_msgs_per_tick_utilization` | Share of the rate budget one tick may spend per destination. | `BrokerNode` |
+| `broker_node_config` | `max_msgs_per_tick_utilization` | Share of the rate budget one tick may spend, per destination when delivering and in total when collecting. | `BrokerNode` |
 | | `max_send_attempts` | Delivery attempts before a message is retired to the dead letter queue. | `BrokerNode` |
 | | `retry_min_delay_msecs` | Delay before the first retry. | `BrokerNode` |
 | | `retry_max_delay_msecs` | Ceiling on the delay, which grows with each attempt. | `BrokerNode` |

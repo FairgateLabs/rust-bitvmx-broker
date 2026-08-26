@@ -71,7 +71,7 @@ Settings live in `BrokerSettings`, loaded from YAML. A sample is in `config/brok
 | Group | What it controls |
 |---|---|
 | `rate_limiter_config` | How many requests one sender may make, and how fast that budget refills. |
-| `broker_node_config` | How many messages a tick delivers, and the retry attempts and delays before the dead letter queue. |
+| `broker_node_config` | How many messages a tick delivers and collects, and the retry attempts and delays before the dead letter queue. |
 | `msg_size_config` | The largest message the broker accepts. |
 | `queue_config` | How many messages one sender may have waiting for one destination. |
 
