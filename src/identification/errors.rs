@@ -37,3 +37,27 @@ impl IdentificationError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_severity_id() {
+        // An allow list or routing table is read at startup, so anything wrong with one stops the broker.
+        assert_eq!(
+            IdentificationError::IoError(std::io::Error::other("missing file")).severity(),
+            Severity::Fatal
+        );
+        assert_eq!(
+            IdentificationError::InvalidRoutingLine("a->".to_string()).severity(),
+            Severity::Fatal
+        );
+
+        // Editing routes on a table that is not in table mode is the caller's mistake.
+        assert_eq!(
+            IdentificationError::NotInTableMode.severity(),
+            Severity::Programming
+        );
+    }
+}

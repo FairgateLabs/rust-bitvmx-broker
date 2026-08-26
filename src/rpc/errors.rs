@@ -225,3 +225,72 @@ impl<T> MutexExt<T> for Arc<Mutex<T>> {
         self.lock().map_err(|_| E::from_mutex_error(context))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identification::errors::IdentificationError;
+    use crate::retry::RetryPolicyError;
+    use crate::storage::BrokerStorageError;
+
+    #[test]
+    fn test_severity_rpc() {
+        assert!(Severity::Fatal.is_fatal());
+        assert!(Severity::Programming.is_fatal());
+        assert!(!Severity::NonFatal.is_fatal());
+
+        let fatal = BrokerError::BindError(std::io::Error::other("port taken"));
+        assert_eq!(fatal.severity(), Severity::Fatal);
+        assert!(fatal.is_fatal());
+
+        let programming = BrokerError::LocalChannelForOwnId;
+        assert_eq!(programming.severity(), Severity::Programming);
+        assert!(programming.is_fatal());
+
+        let non_fatal = BrokerError::Disconnected;
+        assert_eq!(non_fatal.severity(), Severity::NonFatal);
+        assert!(!non_fatal.is_fatal());
+
+        let rpc = BrokerRpcError::RateLimitExceeded;
+        assert_eq!(rpc.severity(), Severity::NonFatal);
+        assert_eq!(BrokerError::from(rpc).severity(), Severity::NonFatal);
+
+        let storage = BrokerStorageError::MutexPoisoned;
+        assert_eq!(storage.severity(), Severity::Fatal);
+        assert_eq!(BrokerError::from(storage).severity(), Severity::Fatal);
+
+        let identification = IdentificationError::NotInTableMode;
+        assert_eq!(identification.severity(), Severity::Programming);
+        assert_eq!(
+            BrokerError::from(identification).severity(),
+            Severity::Programming
+        );
+
+        let retry = RetryPolicyError::InvalidMaxAttempts(1);
+        assert_eq!(retry.severity(), Severity::Fatal);
+        assert_eq!(BrokerError::from(retry).severity(), Severity::Fatal);
+    }
+
+    #[test]
+    fn test_poisoned_mutex() {
+        let mutex = Arc::new(Mutex::new(0u8));
+        let clone = mutex.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = clone.lock().unwrap();
+            panic!("poisoning on purpose");
+        })
+        .join();
+        assert!(mutex.lock().is_err());
+
+        let broker = mutex.lock_or_err::<BrokerError>("storage").unwrap_err();
+        assert!(matches!(broker, BrokerError::MutexError(ref c) if c.contains("storage")));
+        assert_eq!(broker.severity(), Severity::Fatal);
+
+        let rpc = mutex.lock_or_err::<BrokerRpcError>("queue").unwrap_err();
+        assert!(matches!(rpc, BrokerRpcError::MutexError(ref c) if c.contains("queue")));
+        assert_eq!(rpc.severity(), Severity::Fatal);
+
+        let converted: BrokerError = mutex.lock().unwrap_err().into();
+        assert_eq!(converted.severity(), Severity::Fatal);
+    }
+}

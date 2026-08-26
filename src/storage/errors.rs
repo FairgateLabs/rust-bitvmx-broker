@@ -44,3 +44,30 @@ impl From<BrokerStorageError> for BrokerRpcError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_storage_errors() {
+        let mutex: BrokerRpcError = BrokerStorageError::MutexPoisoned.into();
+        assert!(matches!(mutex, BrokerRpcError::MutexError(_)));
+        assert!(mutex.is_fatal());
+
+        // Everything else collapses into ParseError, keeping the original message.
+        let row: BrokerRpcError =
+            BrokerStorageError::MalformedKey("broker/msgs/x".to_string()).into();
+        assert!(matches!(row, BrokerRpcError::ParseError(ref m) if m.contains("broker/msgs/x")));
+        assert!(!row.is_fatal());
+
+        assert_eq!(
+            BrokerStorageError::InvalidIdentifier("not-an-id".to_string()).severity(),
+            Severity::NonFatal
+        );
+        assert!(matches!(
+            BrokerStorageError::from_mutex_error("storage"),
+            BrokerStorageError::MutexPoisoned
+        ));
+    }
+}
