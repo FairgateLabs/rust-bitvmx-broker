@@ -354,6 +354,11 @@ mod tests {
         let long = "x".repeat(MAX_PUBKEY_HASH_LEN + 1);
         let s = format!("{long}:1");
         assert!(RouteIdentifier::from_str(&s).is_err()); // too long pubkey
+
+        // Test TryFrom<String>
+        assert_eq!(RouteIdentifier::try_from("abc:1".to_string()).unwrap(), ri);
+        assert_eq!(RouteIdentifier::try_from("xyz:~".to_string()).unwrap(), ri2);
+        assert!(RouteIdentifier::try_from("invalidformat".to_string()).is_err());
     }
 
     #[test]

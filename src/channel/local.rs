@@ -26,7 +26,12 @@ impl LocalChannel {
     }
 
     pub fn get_all(&self) -> Result<Vec<Message>, BrokerError> {
-        Ok(self.storage.get_all(self.my_id.clone())?)
+        Ok(self.storage.get_all(self.my_id.clone(), None)?)
+    }
+
+    /// Like [`LocalChannel::get_all`] but stops at max. What is left over stays in storage for the next call.
+    pub(crate) fn get_up_to(&self, max: usize) -> Result<Vec<Message>, BrokerError> {
+        Ok(self.storage.get_all(self.my_id.clone(), Some(max))?)
     }
 
     pub fn ack(&self, uid: u64) -> Result<bool, BrokerError> {

@@ -68,8 +68,7 @@ impl BrokerClientAsync {
                 AllowListServerVerifier::new(self.allow_list.clone(), roots.into())
                     .map_err(|e| BrokerError::TlsError(e.to_string()))?,
             ))
-            .with_client_auth_cert(cert, key)
-            .map_err(|e| BrokerError::TlsError(e.to_string()))?;
+            .with_client_auth_cert(cert, key)?;
 
         // Load certificate
         let connector = TlsConnector::from(Arc::new(config));
@@ -86,8 +85,7 @@ impl BrokerClientAsync {
             .ok_or_else(|| BrokerError::TlsError("Empty peer certificate list".into()))?;
 
         // Check against allow list
-        let server_fingerprint = Cert::get_fingerprint_hex(server_cert)
-            .map_err(|e| BrokerError::TlsError(format!("Fingerprint error: {e}")))?;
+        let server_fingerprint = Cert::get_fingerprint_hex(server_cert)?;
         let peer_addr = tls_stream.get_ref().0.peer_addr()?;
         let ipaddr = IpAddr::from_str(&peer_addr.ip().to_string())?;
         let allow = self

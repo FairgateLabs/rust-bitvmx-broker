@@ -74,3 +74,58 @@ impl RateLimiterManager {
         Ok(limiter.try_consume())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{thread::sleep, time::Duration};
+
+    /// Test that a sender can spend its own budget and that it refills over time.
+    #[test]
+    fn test_spend_and_refill() {
+        // Two requests up front, then one more every 100 ms.
+        let manager = RateLimiterManager::new_with_limits(2, 10.0);
+
+        assert!(manager.check_rate_limit("peer").unwrap());
+        assert!(manager.check_rate_limit("peer").unwrap());
+        // The third arrives before any refill, so it is refused rather than queued.
+        assert!(!manager.check_rate_limit("peer").unwrap());
+
+        // Budgets are per sender, so one peer spending its own does not touch another's.
+        assert!(manager.check_rate_limit("other").unwrap());
+        assert!(manager.check_rate_limit("other").unwrap());
+        assert!(!manager.check_rate_limit("other").unwrap());
+
+        // Waiting long enough for one token to accrue lets exactly one more request through.
+        sleep(Duration::from_millis(150));
+        assert!(manager.check_rate_limit("peer").unwrap());
+        assert!(!manager.check_rate_limit("peer").unwrap());
+    }
+
+    /// Test that the bucket refills to its capacity and no further.
+    #[test]
+    fn test_bucket_refills() {
+        let mut limiter = RateLimiter::new(2, 1000.0);
+        assert!(limiter.try_consume());
+        assert!(limiter.try_consume());
+        assert!(!limiter.try_consume());
+
+        // Far more tokens accrue than the bucket holds, and the surplus is discarded.
+        sleep(Duration::from_millis(50));
+        limiter.refill();
+        assert_eq!(limiter.tokens, limiter.capacity);
+
+        // A manager built from settings starts every sender at the configured capacity.
+        let config = RateLimiterConfig {
+            rate_limit_capacity: 1,
+            rate_limit_refill_rate: 0.0,
+            ..Default::default()
+        };
+        let manager = RateLimiterManager::new(config);
+        assert!(manager.check_rate_limit("peer").unwrap());
+        // Nothing is refilled at a rate of zero, so the sender stays refused.
+        assert!(!manager.check_rate_limit("peer").unwrap());
+        sleep(Duration::from_millis(20));
+        assert!(!manager.check_rate_limit("peer").unwrap());
+    }
+}

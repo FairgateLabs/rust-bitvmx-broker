@@ -109,6 +109,10 @@ mod tests {
 
         // Id out of range (u8 max is 255)
         assert!("abc:999".parse::<Identifier>().is_err());
+
+        // The tuple conversion is the other way to build one
+        let from_tuple = Identifier::from(("abc123".to_string(), 42));
+        assert_eq!(from_tuple, id);
     }
 
     #[test]

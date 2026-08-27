@@ -436,7 +436,12 @@ impl BrokerNode {
     }
 
     fn process_in_queue(&self) -> Result<(), BrokerError> {
-        let incoming = self.local_channel.get_all()?;
+        let max_per_tick = self.max_msgs_per_tick(
+            self.broker_settings
+                .broker_node_config
+                .max_msgs_per_tick_utilization,
+        );
+        let incoming = self.local_channel.get_up_to(max_per_tick)?;
         self.storage.store_in_msgs(&incoming)?;
 
         if incoming.len() > 0 {
@@ -658,7 +663,15 @@ mod tests {
     }
 
     fn get_broker_nodes(port: u16) -> (BrokerNode, BrokerNode, BrokerNode) {
-        let (allow_list, _, settings) = get_allow_routing_settings();
+        let (_, _, settings) = get_allow_routing_settings();
+        get_broker_nodes_with_settings(port, settings)
+    }
+
+    fn get_broker_nodes_with_settings(
+        port: u16,
+        settings: BrokerSettings,
+    ) -> (BrokerNode, BrokerNode, BrokerNode) {
+        let (allow_list, _, _) = get_allow_routing_settings();
         let (peer1, peer2, peer3) = get_peers_info(port);
 
         let broker_node1 = BrokerNode::new_peers(
@@ -955,11 +968,15 @@ mod tests {
         let port = 12012;
         cleanup_storage(port, 3);
 
-        let (_, _, settings) = get_allow_routing_settings();
+        let (_, _, mut settings) = get_allow_routing_settings();
+        settings.rate_limiter_config.rate_limit_capacity = 100;
+        settings.broker_node_config.max_msgs_per_tick_utilization = 0.1;
 
-        let (mut sender, mut receiver1, mut receiver2) = get_broker_nodes(port);
+        let (mut sender, mut receiver1, mut receiver2) =
+            get_broker_nodes_with_settings(port, settings.clone());
         let max_per_dest =
             sender.max_msgs_per_tick(settings.broker_node_config.max_msgs_per_tick_utilization);
+        assert_eq!(max_per_dest, 5);
 
         // Send more than allowed per tick
         let excess_msgs = 3;
@@ -1245,6 +1262,106 @@ mod tests {
         drop(receiver);
         drop(broker_node3);
         cleanup_storage(port, 3);
+    }
+
+    #[test]
+    fn test_nodes_built_from_files() {
+        let peer_port = 12030;
+        let service_port = 12031;
+        cleanup_storage(peer_port, 2);
+
+        // The path constructors read the key, the allow list and the routing table off disk.
+        let dir = tmp_path("node_config", peer_port);
+        fs::create_dir_all(&dir).unwrap();
+        let privk_path = format!("{dir}/node.key");
+        let allow_path = format!("{dir}/allowlist.yaml");
+        let routing_path = format!("{dir}/routing.yaml");
+        fs::write(&privk_path, PRIVK1).unwrap();
+        fs::write(&allow_path, "allow_all").unwrap();
+        {
+            let routing = RoutingTable::new();
+            routing.lock().unwrap().allow_all();
+            routing.lock().unwrap().save_to_file(&routing_path).unwrap();
+        }
+
+        let settings = BrokerSettings::new("config/broker_settings.yaml").unwrap();
+        let peer_info = PeerInfo::new(PRIVK1, peer_port);
+        let mut peers = BrokerNode::new_peers_with_paths(
+            "testpaths",
+            peer_info.address,
+            &privk_path,
+            peer_info.storage.clone(),
+            &tmp_path("broker_comms", peer_port),
+            &allow_path,
+            settings.clone(),
+        )
+        .unwrap();
+
+        // The identity comes from the key file, not from anything the caller passed separately.
+        let expected_hash = Cert::new_with_privk(PRIVK1)
+            .unwrap()
+            .get_pubk_hash()
+            .unwrap();
+        assert_eq!(peers.get_pubk_hash().unwrap(), expected_hash);
+        assert_eq!(peers.get_address(), peer_info.address);
+        assert_eq!(
+            peers.get_local_id(),
+            Identifier::new(expected_hash, COMMS_ID)
+        );
+
+        // The allow list is the one the file described.
+        assert!(peers.get_allow_list().lock().unwrap().is_allow_all());
+
+        // A peers node accepts only what is addressed to itself.
+        let own_id = peers.get_local_id();
+        let elsewhere = Identifier::new("someone_else".to_string(), 0);
+        {
+            let routing = peers.get_routing_table();
+            let routing = routing.lock().unwrap();
+            assert!(routing.can_route(&elsewhere, &own_id));
+            assert!(!routing.can_route(&own_id, &elsewhere));
+        }
+
+        // Local channels belong to the services shape, so a peers node refuses to hand one out.
+        assert!(matches!(
+            peers.create_local_channel(elsewhere.clone()),
+            Err(BrokerError::WrongNodeMode(_))
+        ));
+        peers.close();
+        drop(peers);
+
+        let local_id = Identifier::new("service_address".to_string(), 0);
+        let service_info = PeerInfo::new(PRIVK2, service_port);
+        let mut services = BrokerNode::new_services_with_paths(
+            "testpaths",
+            service_info.address,
+            &privk_path,
+            service_info.storage.clone(),
+            &tmp_path("broker_comms", service_port),
+            &allow_path,
+            &routing_path,
+            local_id.clone(),
+            settings,
+        )
+        .unwrap();
+
+        // A services node keeps the routing table the file described.
+        {
+            let routing = services.get_routing_table();
+            assert!(routing.lock().unwrap().can_route(&elsewhere, &local_id));
+        }
+
+        // It serves other destinations, but not the one it reads for itself.
+        assert!(services.create_local_channel(elsewhere).is_ok());
+        assert!(matches!(
+            services.create_local_channel(local_id),
+            Err(BrokerError::LocalChannelForOwnId)
+        ));
+        services.close();
+        drop(services);
+
+        let _ = fs::remove_dir_all(&dir);
+        cleanup_storage(peer_port, 2);
     }
 
     #[test]

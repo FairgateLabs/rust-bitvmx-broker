@@ -84,18 +84,18 @@ impl Cert {
         })
     }
     pub fn from_key_file(key_path: &str) -> Result<Self, BrokerError> {
-        let key_pem =
-            std::fs::read_to_string(key_path).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
+        let key_pem = std::fs::read_to_string(key_path)
+            .map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
         Self::new_with_privk(&key_pem)
     }
 
     pub fn from_file(path: &str, name: &str) -> Result<Self, BrokerError> {
         let cert_path = format!("{path}/{name}.pem");
         let key_path = format!("{path}/{name}.key");
-        let cert_pem =
-            std::fs::read_to_string(cert_path).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
-        let key_pem =
-            std::fs::read_to_string(key_path).map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
+        let cert_pem = std::fs::read_to_string(cert_path)
+            .map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
+        let key_pem = std::fs::read_to_string(key_path)
+            .map_err(|e| BrokerError::AboutCertsAllow(e.into()))?;
 
         let cert_blocks = pem::parse_many(&cert_pem)?;
         let first_cert_block = cert_blocks
@@ -398,5 +398,97 @@ impl ClientCertVerifier for AllowListClientVerifier {
     }
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.inner.supported_verify_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rsa::rand_core::OsRng;
+    use rustls::RootCertStore;
+
+    const TEST_RSA_BITS: usize = 2048;
+
+    fn roots_for(cert: &Cert) -> Arc<RootCertStore> {
+        let mut roots = RootCertStore::empty();
+        roots.add(cert.clone().get_ca_cert_der().unwrap()).unwrap();
+        Arc::new(roots)
+    }
+
+    /// Test that a certificate's public key hash is consistent across different ways of constructing it.
+    #[test]
+    fn test_cert_pubk_hash_consistency() {
+        // The privk constructors sign with PKCS_RSA_SHA256, so they need an RSA key.
+        // Cert::new picks its own algorithm instead and is therefore a separate identity below.
+        let key = Cert::generate_private_key(&mut OsRng, TEST_RSA_BITS).unwrap();
+        let from_privk = Cert::new_with_privk(&key).unwrap();
+        let with_explicit_ca = Cert::new_with_privk_and_ca(&key, CA_KEY).unwrap();
+
+        // The identity follows the key, not the certificate built around it.
+        let hash = from_privk.get_pubk_hash().unwrap();
+        assert_eq!(with_explicit_ca.get_pubk_hash().unwrap(), hash);
+        assert_eq!(hash.len(), 64); // Hex of a SHA256 digest.
+
+        // What the allow list compares at handshake time is derived from the certificate on the wire.
+        let chain = from_privk.get_cert().unwrap();
+        assert!(!chain.is_empty());
+        assert_eq!(Cert::get_fingerprint_hex(&chain[0]).unwrap(), hash);
+
+        // The bit string hash covers only the key inside the SPKI, so it is a different digest.
+        let bitstring = from_privk._get_bitstring_pubk_hash().unwrap();
+        assert_eq!(bitstring.len(), 64);
+        assert_ne!(bitstring, hash);
+
+        assert!(from_privk.get_private_key().is_ok());
+        assert!(!from_privk.clone().get_ca_cert_der().unwrap().is_empty());
+
+        // A different key is a different identity.
+        let generated = Cert::new().unwrap();
+        assert_ne!(generated.get_pubk_hash().unwrap(), hash);
+        assert!(generated.get_private_key().is_ok());
+    }
+
+    /// Test that a certificate can be saved to files and loaded back, preserving its identity.
+    #[test]
+    fn test_cert_file_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().into_owned();
+
+        // generate_key_file creates the directory, so it is given one that does not exist yet.
+        let nested = format!("{path}/certs");
+        Cert::generate_key_file(&nested, "node", &mut OsRng, TEST_RSA_BITS).unwrap();
+
+        let from_key = Cert::from_key_file(&format!("{nested}/node.key")).unwrap();
+        let hash = from_key.get_pubk_hash().unwrap();
+
+        // from_file reads a certificate beside the key and takes the identity from the certificate.
+        std::fs::write(format!("{nested}/node.pem"), &from_key.cert_pem).unwrap();
+        let from_file = Cert::from_file(&nested, "node").unwrap();
+        assert_eq!(from_file.get_pubk_hash().unwrap(), hash);
+
+        // A missing file is reported.
+        assert!(Cert::from_key_file(&format!("{nested}/absent.key")).is_err());
+        assert!(Cert::from_file(&nested, "absent").is_err());
+    }
+
+    /// Test that both server and client verifiers can be built on the same CA and answer for the handshake.
+    #[test]
+    fn test_server_client_verifiers() {
+        let cert = Cert::new().unwrap();
+        let allow_list = AllowList::new();
+
+        let server = AllowListServerVerifier::new(allow_list.clone(), roots_for(&cert)).unwrap();
+        let client = AllowListClientVerifier::new(allow_list, roots_for(&cert)).unwrap();
+
+        // Both wrap a webpki verifier.
+        assert_eq!(
+            server.supported_verify_schemes(),
+            client.supported_verify_schemes()
+        );
+
+        // A client certificate is asked for and required.
+        assert!(client.offer_client_auth());
+        assert!(client.client_auth_mandatory());
+        let _ = client.root_hint_subjects();
     }
 }
