@@ -92,7 +92,7 @@ impl RoutingTable {
         match &self.mode {
             RoutingMode::AllowAll => fs::write(path, ALLOW_ALL_LINE)?,
             RoutingMode::OnlyTo(dest) => {
-                fs::write(path, format!("{ONLY_TO_PREFIX}{}", dest.to_string()))?
+                fs::write(path, format!("{ONLY_TO_PREFIX}{dest}"))?
             }
             RoutingMode::Table(routes) => fs::write(path, serde_yaml::to_string(routes)?)?,
         }
@@ -269,11 +269,11 @@ impl From<&Identifier> for RouteIdentifier {
     }
 }
 
-impl RouteIdentifier {
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for RouteIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.id {
-            Some(id) => format!("{}:{}", self.pubkey_hash, id),
-            None => format!("{}:~", self.pubkey_hash), // Use '~' to denote wildcard
+            Some(id) => write!(f, "{}:{}", self.pubkey_hash, id),
+            None => write!(f, "{}:~", self.pubkey_hash), // Use '~' to denote wildcard
         }
     }
 }
@@ -315,7 +315,7 @@ impl FromStr for RouteIdentifier {
             // Sanity check: ensure it's a number in range
             let parsed = parts[1]
                 .parse::<u8>()
-                .map_err(|_| format!("Invalid id: must be 0–255 or '~'"))?;
+                .map_err(|_| "Invalid id: must be 0–255 or '~'".to_string())?;
             Some(parsed)
         };
 
