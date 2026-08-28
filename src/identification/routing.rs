@@ -91,9 +91,7 @@ impl RoutingTable {
     pub fn save_to_file(&self, path: &str) -> Result<(), IdentificationError> {
         match &self.mode {
             RoutingMode::AllowAll => fs::write(path, ALLOW_ALL_LINE)?,
-            RoutingMode::OnlyTo(dest) => {
-                fs::write(path, format!("{ONLY_TO_PREFIX}{dest}"))?
-            }
+            RoutingMode::OnlyTo(dest) => fs::write(path, format!("{ONLY_TO_PREFIX}{dest}"))?,
             RoutingMode::Table(routes) => fs::write(path, serde_yaml::to_string(routes)?)?,
         }
         Ok(())

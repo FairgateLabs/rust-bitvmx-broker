@@ -54,7 +54,10 @@ fn main() -> anyhow::Result<()> {
                             } else {
                                 match IpAddr::from_str(ip_str) {
                                     Ok(ip) => {
-                                        allowlist.lock().unwrap().add_entry(pubk.to_string(), Some(ip));
+                                        allowlist
+                                            .lock()
+                                            .unwrap()
+                                            .add_entry(pubk.to_string(), Some(ip));
                                         println!("Added {}:{}", pubk, ip);
                                     }
                                     Err(_) => println!("Invalid IP address"),
