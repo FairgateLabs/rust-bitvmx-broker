@@ -92,13 +92,14 @@ impl BrokerServerStorage {
     pub fn get(&self, dest: Identifier) -> Result<Option<Message>, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
         let prefix = Self::msgs_prefix(&dest);
-        let Some(key) = storage.partial_compare_keys_first(&prefix, None)? else {
+        let keys = storage.partial_compare_keys_limited(&prefix, Some(1), None)?;
+        let Some(key) = keys.first() else {
             return Ok(None);
         };
-        let Some(msg) = storage.get(&key, None)? else {
+        let Some(msg) = storage.get(key, None)? else {
             return Ok(None);
         };
-        let (uid, from) = Self::decode_key(&key)?;
+        let (uid, from) = Self::decode_key(key)?;
         Ok(Some(Message { uid, from, msg }))
     }
 
