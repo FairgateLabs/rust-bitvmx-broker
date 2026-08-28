@@ -8,6 +8,9 @@ updates:
     open-pull-requests-limit: 10
     cooldown:
       default-days: 10
+    ignore:
+      - dependency-name: "rcgen"
+        versions: [">0.12.1"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
