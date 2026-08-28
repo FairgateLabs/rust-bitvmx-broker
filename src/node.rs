@@ -343,7 +343,7 @@ impl BrokerNode {
                 else {
                     continue;
                 };
-                if msg.retry.is_ready(now) == false {
+                if !msg.retry.is_ready(now) {
                     continue;
                 }
 
@@ -444,7 +444,7 @@ impl BrokerNode {
         let incoming = self.local_channel.get_up_to(max_per_tick)?;
         self.storage.store_in_msgs(&incoming)?;
 
-        if incoming.len() > 0 {
+        if !incoming.is_empty() {
             info!(
                 "Moved {} messages from localchannel to inqueue",
                 incoming.len()

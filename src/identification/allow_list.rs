@@ -34,7 +34,7 @@ impl AllowList {
         Self::parse_yaml(&content)
     }
     fn parse_yaml(yaml_str: &str) -> Result<Arc<Mutex<Self>>, IdentificationError> {
-        let allow_list: HashMap<PubkHash, Option<IpAddr>> = serde_yaml::from_str(&yaml_str)?;
+        let allow_list: HashMap<PubkHash, Option<IpAddr>> = serde_yaml::from_str(yaml_str)?;
         Ok(Arc::new(Mutex::new(Self {
             allow_list,
             allow_all: false,
@@ -46,7 +46,7 @@ impl AllowList {
         addrs: Vec<IpAddr>,
     ) -> Result<Arc<Mutex<Self>>, BrokerError> {
         let mut allow_list = HashMap::new();
-        for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
+        for (cert, addr) in certs.into_iter().zip(addrs) {
             let pubkey_hash = cert.get_pubk_hash()?;
             allow_list.insert(pubkey_hash, Some(addr));
         }
@@ -115,7 +115,7 @@ impl AllowList {
         certs: Vec<Cert>,
         addrs: Vec<IpAddr>,
     ) -> Result<(), BrokerError> {
-        for (cert, addr) in certs.into_iter().zip(addrs.into_iter()) {
+        for (cert, addr) in certs.into_iter().zip(addrs) {
             self.add_by_cert(&cert, addr)?;
         }
         Ok(())

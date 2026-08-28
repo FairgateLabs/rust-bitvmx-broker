@@ -40,7 +40,7 @@ pub struct Cert {
 
 impl Cert {
     fn pubk_hash_from_der(spki_der: &Vec<u8>) -> Result<PubkHash, BrokerError> {
-        let fingerprint = Sha256::digest(&spki_der);
+        let fingerprint = Sha256::digest(spki_der);
         let hexsum = hex::encode(fingerprint);
         Ok(hexsum)
     }
@@ -291,10 +291,7 @@ impl ServerCertVerifier for AllowListServerVerifier {
             Ok(ServerCertVerified::assertion())
         } else {
             info!("❌ Unauthorized server (fingerprint: {fingerprint_hex})");
-            let err = io::Error::new(
-                io::ErrorKind::Other,
-                format!("Unauthorized fingerprint: {fingerprint_hex}"),
-            );
+            let err = io::Error::other(format!("Unauthorized fingerprint: {fingerprint_hex}"));
             Err(RustlsError::InvalidCertificate(CertificateError::Other(
                 rustls::OtherError(Arc::new(err)),
             )))
@@ -371,10 +368,7 @@ impl ClientCertVerifier for AllowListClientVerifier {
             Ok(ClientCertVerified::assertion())
         } else {
             info!("❌ Unauthorized client (fingerprint: {fingerprint_hex})");
-            let err = io::Error::new(
-                io::ErrorKind::Other,
-                format!("Unauthorized fingerprint: {fingerprint_hex}"),
-            );
+            let err = io::Error::other(format!("Unauthorized fingerprint: {fingerprint_hex}"));
             Err(RustlsError::InvalidCertificate(CertificateError::Other(
                 rustls::OtherError(Arc::new(err)),
             )))

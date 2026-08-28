@@ -111,8 +111,8 @@ impl RemoteChannel {
     /// Acknowledges before the caller has seen the message, so a failure afterwards loses it. Use
     /// [`RemoteChannel::get`] and [`RemoteChannel::ack`] separately when the message must survive that.
     pub fn recv(&self) -> Result<Option<(String, Identifier)>, crate::rpc::errors::BrokerError> {
-        if let Some(msg) = self.client.get_msg(self.my_id.id.clone())? {
-            self.client.ack(self.my_id.id.clone(), msg.uid)?;
+        if let Some(msg) = self.client.get_msg(self.my_id.id)? {
+            self.client.ack(self.my_id.id, msg.uid)?;
             Ok(Some((msg.msg, msg.from)))
         } else {
             Ok(None)
