@@ -91,7 +91,8 @@ impl BrokerServerStorage {
     // The oldest message waiting for dest.
     pub fn get(&self, dest: Identifier) -> Result<Option<Message>, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
-        let keys = storage.partial_compare_keys(&Self::msgs_prefix(&dest), None)?;
+        let prefix = Self::msgs_prefix(&dest);
+        let keys = storage.partial_compare_keys_limited(&prefix, Some(1), None)?;
         let Some(key) = keys.first() else {
             return Ok(None);
         };
