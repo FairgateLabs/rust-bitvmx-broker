@@ -71,7 +71,7 @@ impl RemoteChannel {
         my_id: u8,
         server_pubk_hash: PubkHash,
     ) -> Result<(Self, Identifier), crate::rpc::errors::BrokerError> {
-        let my_cert = Cert::new()?;
+        let my_cert = Cert::new_simple()?;
         let allow_list = AllowList::new();
         allow_list
             .lock_or_err::<BrokerError>("allow_list")?

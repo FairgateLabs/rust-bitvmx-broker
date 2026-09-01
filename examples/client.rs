@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
     let flags = Flags::parse();
     init_tracing()?;
 
-    let cert = Cert::new().unwrap();
+    let cert = Cert::new_simple().unwrap();
     let allow_list =
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
     let config = BrokerSettings::new("config/broker_settings.yaml").unwrap();

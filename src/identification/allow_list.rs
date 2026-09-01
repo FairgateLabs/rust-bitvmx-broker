@@ -263,7 +263,7 @@ mod tests {
     fn test_from_cert() {
         let local_addr = addr_from_str("127.0.0.1").unwrap();
         let other_addr = addr_from_str("127.0.0.2").unwrap();
-        let (kept, dropped) = (Cert::new().unwrap(), Cert::new().unwrap());
+        let (kept, dropped) = (Cert::new_simple().unwrap(), Cert::new_simple().unwrap());
         let (kept_hash, dropped_hash) = (
             kept.get_pubk_hash().unwrap(),
             dropped.get_pubk_hash().unwrap(),

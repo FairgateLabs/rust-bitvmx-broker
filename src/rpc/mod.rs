@@ -59,7 +59,7 @@ impl BrokerConfig {
         server_port: u16,
         server_ip: Option<IpAddr>,
     ) -> Result<(Self, Identifier, Cert), BrokerError> {
-        let cert = Cert::new()?;
+        let cert = Cert::new_simple()?;
         let identifier = Identifier::new(cert.get_pubk_hash()?, SERVER_ID);
         Ok((Self::new(server_port, server_ip, None), identifier, cert))
     }

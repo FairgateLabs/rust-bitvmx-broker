@@ -2,7 +2,7 @@ use crate::identification::{allow_list::AllowList, identifier::PubkHash};
 use crate::rpc::errors::BrokerError;
 use crate::settings::CA_KEY;
 use pem::Pem;
-use rcgen::{Certificate, CertificateParams, KeyPair, SanType};
+use rcgen::{CertificateParams, CertifiedIssuer, KeyPair, PublicKeyData};
 use ring::digest::{digest, SHA256};
 use rsa::{
     pkcs8::EncodePrivateKey,
@@ -45,9 +45,11 @@ impl Cert {
         Ok(hexsum)
     }
 
-    pub fn new() -> Result<Self, BrokerError> {
-        let cert = Self::create_cert(None)?;
-        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, CA_KEY)?;
+    /// Do not use in production, this is for testing purposes only. The key is generated on the spot, but it is ECDSA.
+    pub fn new_simple() -> Result<Self, BrokerError> {
+        let params = Self::cert_params()?;
+        let key = KeyPair::generate()?;
+        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&params, &key, CA_KEY)?;
         let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         info!("Created new certificate");
         Ok(Self {
@@ -60,8 +62,8 @@ impl Cert {
     }
     /// privk is a hex string in PEM format.
     pub fn new_with_privk(privk: &str) -> Result<Self, BrokerError> {
-        let cert = Self::create_cert(Some(privk))?;
-        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, CA_KEY)?;
+        let (params, key) = Self::create_cert(privk)?;
+        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&params, &key, CA_KEY)?;
         let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         Ok(Self {
             key_pem,
@@ -72,8 +74,8 @@ impl Cert {
         })
     }
     pub fn new_with_privk_and_ca(privk: &str, ca_key: &str) -> Result<Self, BrokerError> {
-        let cert = Self::create_cert(Some(privk))?;
-        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&cert, ca_key)?;
+        let (params, key) = Self::create_cert(privk)?;
+        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&params, &key, ca_key)?;
         let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         Ok(Self {
             key_pem,
@@ -111,7 +113,7 @@ impl Cert {
         let spki_der = parsed.tbs_certificate.subject_pki.raw.to_vec();
 
         let ca = Self::load_ca(CA_KEY)?;
-        let ca_der = ca.serialize_der()?;
+        let ca_der = ca.der().to_vec();
         let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
         Ok(Self {
             key_pem,
@@ -122,42 +124,46 @@ impl Cert {
         })
     }
 
-    fn create_cert(privk: Option<&str>) -> Result<Certificate, BrokerError> {
-        let mut params = CertificateParams::default();
-
-        params.subject_alt_names = vec![
-            SanType::DnsName("localhost".into()),
-            SanType::IpAddress("127.0.0.1".parse()?),
-        ];
-        if let Some(privk_str) = privk {
-            let keypair = KeyPair::from_pem(privk_str)?;
-            params.key_pair = Some(keypair);
-            params.alg = &rcgen::PKCS_RSA_SHA256;
-        }
-
-        Ok(Certificate::from_params(params)?)
+    // The certificate parameters.
+    fn cert_params() -> Result<CertificateParams, BrokerError> {
+        Ok(CertificateParams::new(vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+        ])?)
     }
-    fn load_ca(ca_key: &str) -> Result<rcgen::Certificate, BrokerError> {
-        let key_pair = KeyPair::from_pem(ca_key)?;
 
+    // The certificate creation. The signature algorithm is taken from the key, and the identities in use are RSA.
+    fn create_cert(privk: &str) -> Result<(CertificateParams, KeyPair), BrokerError> {
+        let key = KeyPair::from_pem(privk)?;
+        if !key.is_compatible(&rcgen::PKCS_RSA_SHA256) {
+            return Err(BrokerError::UnsupportedKeyAlgorithm(
+                "the private key must be RSA".to_string(),
+            ));
+        }
+        Ok((Self::cert_params()?, key))
+    }
+
+    fn load_ca(ca_key: &str) -> Result<CertifiedIssuer<'static, KeyPair>, BrokerError> {
+        let key_pair = KeyPair::from_pem(ca_key)?;
         let mut params = CertificateParams::default();
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        params.key_pair = Some(key_pair);
-        params.alg = &rcgen::PKCS_RSA_SHA256;
-
-        let ca = Certificate::from_params(params)?;
-        Ok(ca)
+        Ok(CertifiedIssuer::self_signed(params, key_pair)?)
     }
+
     fn get_vars(
-        cert: &Certificate,
+        params: &CertificateParams,
+        key: &KeyPair,
         ca_key: &str,
     ) -> Result<(String, String, Vec<u8>, Vec<u8>), BrokerError> {
-        let key_pem = cert.serialize_private_key_pem();
-        let spki_der = cert.get_key_pair().public_key_der();
         let ca = Self::load_ca(ca_key)?;
-        let cert_pem = cert.serialize_pem_with_signer(&ca)?;
-        let ca_der = ca.serialize_der()?;
-        Ok((key_pem, cert_pem, spki_der, ca_der))
+        // The certificate carries the public key and is signed by the authority.
+        let cert = params.signed_by(key, &ca)?;
+        Ok((
+            key.serialize_pem(),
+            cert.pem(),
+            key.subject_public_key_info(),
+            ca.der().to_vec(),
+        ))
     }
 
     fn generate_private_key<R: RngCore + CryptoRng>(
@@ -412,8 +418,7 @@ mod tests {
     /// Test that a certificate's public key hash is consistent across different ways of constructing it.
     #[test]
     fn test_cert_pubk_hash_consistency() {
-        // The privk constructors sign with PKCS_RSA_SHA256, so they need an RSA key.
-        // Cert::new picks its own algorithm instead and is therefore a separate identity below.
+        // The privk constructors require an RSA key.
         let key = Cert::generate_private_key(&mut OsRng, TEST_RSA_BITS).unwrap();
         let from_privk = Cert::new_with_privk(&key).unwrap();
         let with_explicit_ca = Cert::new_with_privk_and_ca(&key, CA_KEY).unwrap();
@@ -437,7 +442,7 @@ mod tests {
         assert!(!from_privk.clone().get_ca_cert_der().unwrap().is_empty());
 
         // A different key is a different identity.
-        let generated = Cert::new().unwrap();
+        let generated = Cert::new_simple().unwrap();
         assert_ne!(generated.get_pubk_hash().unwrap(), hash);
         assert!(generated.get_private_key().is_ok());
     }
@@ -468,7 +473,7 @@ mod tests {
     /// Test that both server and client verifiers can be built on the same CA and answer for the handshake.
     #[test]
     fn test_server_client_verifiers() {
-        let cert = Cert::new().unwrap();
+        let cert = Cert::new_simple().unwrap();
         let allow_list = AllowList::new();
 
         let server = AllowListServerVerifier::new(allow_list.clone(), roots_for(&cert)).unwrap();
