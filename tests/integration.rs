@@ -1,3 +1,5 @@
+mod common;
+
 use bitvmx_broker::{
     channel::{local::LocalChannel, remote::RemoteChannel},
     identification::{
@@ -17,6 +19,7 @@ use bitvmx_broker::{
         FRAME_ENVELOPE_RESERVE_KB, MAX_FRAME_SIZE_KB, RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE,
     },
 };
+use common::{BrokerConfigTestExt, BrokerServerTestExt, CertTestExt, RemoteChannelTestExt};
 use std::{
     fs::{self},
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -1068,7 +1071,7 @@ fn test_readme_example() {
     let port = 10000;
     cleanup_storage(port, 3);
     // Create Server
-    let server_cert = Cert::new().unwrap();
+    let server_cert = Cert::new_simple().unwrap();
 
     let allow_list = AllowList::new();
     let routing_table = RoutingTable::new();
@@ -1083,8 +1086,8 @@ fn test_readme_example() {
     );
 
     // Create BrokerClientAsync
-    let client1_cert = Cert::new().unwrap();
-    let client2_cert = Cert::new().unwrap();
+    let client1_cert = Cert::new_simple().unwrap();
+    let client2_cert = Cert::new_simple().unwrap();
     let client1_identifier = Identifier::new(client1_cert.get_pubk_hash().unwrap(), 0);
     let client2_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
 

@@ -1,8 +1,13 @@
+#[allow(dead_code)]
+#[path = "../tests/common/mod.rs"]
+mod common;
+
 use bitvmx_broker::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{client::BrokerClient, config::BrokerSettings, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
+use common::CertTestExt;
 use std::{
     net::{IpAddr, Ipv4Addr},
     thread::sleep,
@@ -50,7 +55,7 @@ fn main() -> anyhow::Result<()> {
     let flags = Flags::parse();
     init_tracing()?;
 
-    let cert = Cert::new().unwrap();
+    let cert = Cert::new_simple().unwrap();
     let allow_list =
         AllowList::from_certs(vec![cert.clone()], vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]).unwrap();
     let config = BrokerSettings::new("config/broker_settings.yaml").unwrap();

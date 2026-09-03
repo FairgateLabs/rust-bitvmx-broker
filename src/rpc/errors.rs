@@ -67,6 +67,9 @@ pub enum BrokerError {
     #[error("Rcgen error: {0}")]
     RcgenError(#[from] rcgen::Error),
 
+    #[error("Unsupported key algorithm: {0}")]
+    UnsupportedKeyAlgorithm(String),
+
     #[error("Rustls error: {0}")]
     RustlsError(#[from] rustls::Error),
 
@@ -111,6 +114,7 @@ impl BrokerError {
             | BrokerError::InvalidPrivateKey(_)
             | BrokerError::X509ParseError(_)
             | BrokerError::MutexError(_)
+            | BrokerError::UnsupportedKeyAlgorithm(_)
             | BrokerError::Settings(_) => Severity::Fatal,
 
             BrokerError::WrongNodeMode(_) | BrokerError::LocalChannelForOwnId => {

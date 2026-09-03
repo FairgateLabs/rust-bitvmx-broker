@@ -2,10 +2,9 @@ use crate::{
     identification::identifier::Identifier,
     rpc::{
         config::{BrokerSettings, MsgSizeConfig},
-        errors::{BrokerError, BrokerRpcError},
-        tls_helper::Cert,
+        errors::BrokerRpcError,
     },
-    settings::{FRAME_ENVELOPE_RESERVE_KB, SERVER_ID},
+    settings::FRAME_ENVELOPE_RESERVE_KB,
 };
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -52,16 +51,6 @@ impl BrokerConfig {
             server_ip,
             broker_settings: broker_settings.unwrap_or_default(),
         }
-    }
-
-    // Do not use in production, this is for testing purposes
-    pub fn new_only_address(
-        server_port: u16,
-        server_ip: Option<IpAddr>,
-    ) -> Result<(Self, Identifier, Cert), BrokerError> {
-        let cert = Cert::new()?;
-        let identifier = Identifier::new(cert.get_pubk_hash()?, SERVER_ID);
-        Ok((Self::new(server_port, server_ip, None), identifier, cert))
     }
 
     /// Where the server listens. An unspecified address means every interface.
