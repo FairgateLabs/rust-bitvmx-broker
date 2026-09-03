@@ -5,7 +5,7 @@ use crate::{
     identification::{allow_list::AllowList, identifier::Identifier, routing::RoutingTable},
     rpc::{
         config::{MsgSizeConfig, QueueConfig},
-        errors::{BrokerError, MutexExt},
+        errors::BrokerError,
         rate_limiter::RateLimiterManager,
         tls_helper::{AllowListClientVerifier, Cert},
         BrokerApi,
@@ -75,23 +75,6 @@ impl BrokerServer {
             shutdown_tx,
             storage,
         })
-    }
-
-    // Do not use in production, this is for testing purposes only
-    pub fn new_simple(
-        config: &BrokerConfig,
-        server_storage_path: &str,
-        cert: Cert,
-    ) -> Result<Self, BrokerError> {
-        let allow_list = AllowList::new();
-        allow_list
-            .lock_or_err::<BrokerError>("allow_list")?
-            .set_allow_all(true);
-
-        let routing = RoutingTable::new();
-        routing.lock_or_err::<BrokerError>("routing")?.allow_all();
-
-        Self::new(config, server_storage_path, cert, allow_list, routing)
     }
 
     // A local channel shares the storage of this server, which is the only way for both to see the

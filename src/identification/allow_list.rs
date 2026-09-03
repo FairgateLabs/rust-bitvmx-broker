@@ -132,7 +132,7 @@ impl AllowList {
 #[cfg(test)]
 mod tests {
     use crate::identification::allow_list::AllowList;
-    use crate::rpc::tls_helper::Cert;
+    use crate::rpc::tls_helper::new_simple_cert;
     use std::{fs, net::IpAddr};
     use tempfile::tempdir;
 
@@ -263,7 +263,7 @@ mod tests {
     fn test_from_cert() {
         let local_addr = addr_from_str("127.0.0.1").unwrap();
         let other_addr = addr_from_str("127.0.0.2").unwrap();
-        let (kept, dropped) = (Cert::new_simple().unwrap(), Cert::new_simple().unwrap());
+        let (kept, dropped) = (new_simple_cert().unwrap(), new_simple_cert().unwrap());
         let (kept_hash, dropped_hash) = (
             kept.get_pubk_hash().unwrap(),
             dropped.get_pubk_hash().unwrap(),

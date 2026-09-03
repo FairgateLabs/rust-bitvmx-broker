@@ -5,12 +5,7 @@ use crate::{
         allow_list::AllowList,
         identifier::{Identifier, PubkHash},
     },
-    rpc::{
-        client::BrokerClient,
-        errors::{BrokerError, MutexExt},
-        tls_helper::Cert,
-        BrokerConfig, Message,
-    },
+    rpc::{client::BrokerClient, tls_helper::Cert, BrokerConfig, Message},
     settings::SERVER_ID,
 };
 use std::sync::{Arc, Mutex};
@@ -63,27 +58,6 @@ impl RemoteChannel {
             my_id,
             server_id,
         })
-    }
-
-    // Do not use in production, this is for testing purposes only
-    pub fn new_simple(
-        config: &BrokerConfig,
-        my_id: u8,
-        server_pubk_hash: PubkHash,
-    ) -> Result<(Self, Identifier), crate::rpc::errors::BrokerError> {
-        let my_cert = Cert::new_simple()?;
-        let allow_list = AllowList::new();
-        allow_list
-            .lock_or_err::<BrokerError>("allow_list")?
-            .set_allow_all(true);
-        let my_identifier = Identifier {
-            pubkey_hash: my_cert.get_pubk_hash()?,
-            id: my_id,
-        };
-        Ok((
-            Self::new(config, my_cert, Some(my_id), allow_list, server_pubk_hash)?,
-            my_identifier,
-        ))
     }
 
     pub fn send(

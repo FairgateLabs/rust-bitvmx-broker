@@ -45,21 +45,6 @@ impl Cert {
         Ok(hexsum)
     }
 
-    /// Do not use in production, this is for testing purposes only. The key is generated on the spot, but it is ECDSA.
-    pub fn new_simple() -> Result<Self, BrokerError> {
-        let params = Self::cert_params()?;
-        let key = KeyPair::generate()?;
-        let (key_pem, cert_pem, spki_der, ca_der) = Self::get_vars(&params, &key, CA_KEY)?;
-        let pubk_hash = Self::pubk_hash_from_der(&spki_der)?;
-        info!("Created new certificate");
-        Ok(Self {
-            key_pem,
-            cert_pem,
-            spki_der,
-            ca_der,
-            pubk_hash,
-        })
-    }
     /// privk is a hex string in PEM format.
     pub fn new_with_privk(privk: &str) -> Result<Self, BrokerError> {
         let (params, key) = Self::create_cert(privk)?;
@@ -402,6 +387,21 @@ impl ClientCertVerifier for AllowListClientVerifier {
 }
 
 #[cfg(test)]
+pub(crate) fn new_simple_cert() -> Result<Cert, BrokerError> {
+    let params = Cert::cert_params()?;
+    let key = KeyPair::generate()?;
+    let (key_pem, cert_pem, spki_der, ca_der) = Cert::get_vars(&params, &key, CA_KEY)?;
+    let pubk_hash = Cert::pubk_hash_from_der(&spki_der)?;
+    Ok(Cert {
+        key_pem,
+        cert_pem,
+        spki_der,
+        ca_der,
+        pubk_hash,
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use rsa::rand_core::OsRng;
@@ -442,7 +442,7 @@ mod tests {
         assert!(!from_privk.clone().get_ca_cert_der().unwrap().is_empty());
 
         // A different key is a different identity.
-        let generated = Cert::new_simple().unwrap();
+        let generated = new_simple_cert().unwrap();
         assert_ne!(generated.get_pubk_hash().unwrap(), hash);
         assert!(generated.get_private_key().is_ok());
     }
@@ -473,7 +473,7 @@ mod tests {
     /// Test that both server and client verifiers can be built on the same CA and answer for the handshake.
     #[test]
     fn test_server_client_verifiers() {
-        let cert = Cert::new_simple().unwrap();
+        let cert = new_simple_cert().unwrap();
         let allow_list = AllowList::new();
 
         let server = AllowListServerVerifier::new(allow_list.clone(), roots_for(&cert)).unwrap();

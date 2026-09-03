@@ -1,3 +1,5 @@
+mod common;
+
 use bitvmx_broker::{
     channel::{local::LocalChannel, remote::RemoteChannel},
     identification::{
@@ -17,6 +19,7 @@ use bitvmx_broker::{
         FRAME_ENVELOPE_RESERVE_KB, MAX_FRAME_SIZE_KB, RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_RATE,
     },
 };
+use common::{BrokerConfigTestExt, BrokerServerTestExt, CertTestExt, RemoteChannelTestExt};
 use std::{
     fs::{self},
     net::{IpAddr, Ipv4Addr, SocketAddr},

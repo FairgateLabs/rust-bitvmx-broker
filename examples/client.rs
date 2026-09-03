@@ -1,8 +1,13 @@
+#[allow(dead_code)]
+#[path = "../tests/common/mod.rs"]
+mod common;
+
 use bitvmx_broker::{
     identification::{allow_list::AllowList, identifier::Identifier},
     rpc::{client::BrokerClient, config::BrokerSettings, tls_helper::Cert, BrokerConfig},
 };
 use clap::Parser;
+use common::CertTestExt;
 use std::{
     net::{IpAddr, Ipv4Addr},
     thread::sleep,
