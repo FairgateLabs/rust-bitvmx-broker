@@ -89,6 +89,9 @@ impl BrokerNode {
         mode: NodeMode,
         broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
+        local_id
+            .validate()
+            .map_err(crate::storage::BrokerStorageError::InvalidIdentifier)?;
         let cert = Cert::new_with_privk(server_privk)?;
         let broker_config = BrokerConfig::new(
             address.port(),
@@ -295,6 +298,8 @@ impl BrokerNode {
     /// This can only be called on a node created with [`BrokerNode::new_services`],
     pub fn send_service(&self, dest: &Identifier, data: String) -> Result<(), BrokerError> {
         self.require_mode(NodeMode::Services)?;
+        dest.validate()
+            .map_err(crate::storage::BrokerStorageError::InvalidIdentifier)?;
         self.storage.enqueue_out(
             &dest.pubkey_hash,
             &self.address,
@@ -330,10 +335,9 @@ impl BrokerNode {
     fn process_service_out_queue(&self) -> Result<(), BrokerError> {
         for key in self.storage.sorted_keys(&QueueType::OutQueue, None)? {
             if let Some(raw) = self.storage.get(&key)? {
-                let Some((dest, data)) = self.discard_row_on_err(
-                    &key,
-                    serde_json::from_str::<(Identifier, String)>(&raw),
-                )? else {
+                let Some((dest, data)) = self
+                    .discard_row_on_err(&key, serde_json::from_str::<(Identifier, String)>(&raw))?
+                else {
                     continue;
                 };
                 self.local_channel.send(&dest, data)?;
