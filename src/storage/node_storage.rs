@@ -1,10 +1,11 @@
 // The BrokerNodeStorage holds the out, in and dead letter queues of a single BrokerNode.
 // The key "broker/{queue}/{name}/uid" stores the current uid of a queue.
 // The keys "broker/{queue}/{name}/msgs/{uid}/{pubk_hash}/{tag}" store the messages, where tag is
-//     the destination address for the out and dead letter queues, and the sender id for the in queue.
+//     the destination address (peers) or component id (services) for out/dead letter queues,
+//     and the sender id for the in queue. Peer keys retain their existing format.
 // It runs on the single threaded storage the caller owns, so it takes an Rc and never locks.
 
-use crate::identification::identifier::{validate_pubkey_hash, Identifier, PubkHash};
+use crate::identification::identifier::{validate_pubkey_hash, Identifier};
 use crate::rpc::Message;
 use crate::storage::errors::BrokerStorageError;
 use std::net::SocketAddr;
@@ -84,12 +85,20 @@ impl BrokerNodeStorage {
     }
 
     // Destination of an out or dead letter row.
-    pub fn dest_from_key(key: &str) -> Result<(PubkHash, SocketAddr), BrokerStorageError> {
-        let (pubk_hash, address) = Self::key_fields(key)?;
-        let address = address
-            .parse()
+    pub fn dest_from_key(
+        key: &str,
+    ) -> Result<(Identifier, Option<SocketAddr>), BrokerStorageError> {
+        let (pubk_hash, tag) = Self::key_fields(key)?;
+        if let Ok(address) = tag.parse::<SocketAddr>() {
+            return Ok((
+                Identifier::new(pubk_hash.to_string(), crate::settings::COMMS_ID),
+                Some(address),
+            ));
+        }
+        let id = tag
+            .parse::<u8>()
             .map_err(|_| BrokerStorageError::MalformedKey(key.to_string()))?;
-        Ok((pubk_hash.to_string(), address))
+        Ok((Identifier::new(pubk_hash.to_string(), id), None))
     }
 
     // Sender of an in queue row.
@@ -138,29 +147,26 @@ impl BrokerNodeStorage {
 
     pub fn enqueue_out(
         &self,
-        pubk_hash: &PubkHash,
-        address: &SocketAddr,
+        dest: &Identifier,
+        address: Option<&SocketAddr>,
         raw: &str,
     ) -> Result<(), BrokerStorageError> {
         let uid = self.next_uid(&QueueType::OutQueue)?;
-        let key = self.msg_key(&QueueType::OutQueue, uid, pubk_hash, &address.to_string())?;
+        let tag = address.map_or_else(|| dest.id.to_string(), ToString::to_string);
+        let key = self.msg_key(&QueueType::OutQueue, uid, &dest.pubkey_hash, &tag)?;
         self.storage.set(&key, raw, None)?;
         Ok(())
     }
 
     pub fn enqueue_deadletter(
         &self,
-        pubk_hash: &PubkHash,
-        address: &SocketAddr,
+        dest: &Identifier,
+        address: Option<&SocketAddr>,
         raw: &str,
     ) -> Result<(), BrokerStorageError> {
         let uid = self.next_uid(&QueueType::DeadLetterQueue)?;
-        let key = self.msg_key(
-            &QueueType::DeadLetterQueue,
-            uid,
-            pubk_hash,
-            &address.to_string(),
-        )?;
+        let tag = address.map_or_else(|| dest.id.to_string(), ToString::to_string);
+        let key = self.msg_key(&QueueType::DeadLetterQueue, uid, &dest.pubkey_hash, &tag)?;
         self.storage.set(&key, raw, None)?;
         Ok(())
     }

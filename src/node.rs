@@ -261,8 +261,8 @@ impl BrokerNode {
     fn enqueue_out_msg(
         &self,
         ctx: &str,
-        pubk_hash: &PubkHash,
-        address: &SocketAddr,
+        dest: &Identifier,
+        address: Option<&SocketAddr>,
         data: String,
     ) -> Result<(), BrokerError> {
         let msg = OutgoingMsg {
@@ -272,7 +272,7 @@ impl BrokerNode {
         };
 
         self.storage
-            .enqueue_out(pubk_hash, address, &serde_json::to_string(&msg)?)?;
+            .enqueue_out(dest, address, &serde_json::to_string(&msg)?)?;
 
         Ok(())
     }
@@ -287,15 +287,22 @@ impl BrokerNode {
         data: String,
     ) -> Result<(), BrokerError> {
         self.require_mode(NodeMode::Peers)?;
-        self.enqueue_out_msg(ctx, pubk_hash, &address, data)?;
+        self.enqueue_out_msg(
+            ctx,
+            &Identifier::new(pubk_hash.clone(), COMMS_ID),
+            Some(&address),
+            data,
+        )?;
         Ok(())
     }
 
-    /// Hand a message to another component on this broker.
+    /// Queue a message for another component on this broker in the caller's storage.
+    /// Like `send_peer`, delivery waits for `tick` and enqueueing participates in the
+    /// caller's global transaction. Commit before ticking to avoid delivering uncommitted work.
     /// This can only be called on a node created with [`BrokerNode::new_services`],
     pub fn send_service(&self, dest: &Identifier, data: String) -> Result<(), BrokerError> {
         self.require_mode(NodeMode::Services)?;
-        self.local_channel.send(dest, data)
+        self.enqueue_out_msg("", dest, None, data)
     }
 
     /// Removes a row that could not be read and reports it as absent, so the caller skips it and
@@ -327,14 +334,14 @@ impl BrokerNode {
 
         for key in self.storage.sorted_keys(&QueueType::OutQueue, None)? {
             if let Some(raw) = self.storage.get(&key)? {
-                let Some((pubk_hash, address)) =
+                let Some((dest, address)) =
                     self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?
                 else {
                     continue;
                 };
 
-                // check if destination has not exceeded max messages per tick by destination pubk_hash
-                let sent = sent_per_dest.entry(pubk_hash.clone()).or_insert(0);
+                // Services sharing a public-key hash have independent component destinations.
+                let sent = sent_per_dest.entry(dest.to_string()).or_insert(0);
                 if *sent >= max_per_dest {
                     continue; // destination exhausted for this tick
                 }
@@ -349,14 +356,22 @@ impl BrokerNode {
 
                 if msg.retry.get_attempts() > 0 {
                     info!(
-                        "Attempt number {} to send queued message to {} at {}",
+                        "Attempt number {} to send queued message to {} at {:?}",
                         msg.retry.get_attempts() + 1,
-                        pubk_hash,
+                        dest,
                         address
                     );
                 }
 
-                let attempt_to_send = self.internal_send(&address, &pubk_hash, &msg.payload);
+                let attempt_to_send = match address {
+                    Some(address) => self.internal_send(&address, &dest.pubkey_hash, &msg.payload),
+                    None => {
+                        // A local storage failure must not exhaust delivery retries and
+                        // discard the message. Leave it queued and propagate the error.
+                        self.local_channel.send(&dest, msg.payload.clone())?;
+                        Ok(true)
+                    }
+                };
                 if attempt_to_send.as_ref().is_ok_and(|x| *x) {
                     self.storage.remove(&key)?;
                     *sent += 1;
@@ -367,8 +382,8 @@ impl BrokerNode {
                         Err(e) => e.to_string(),
                     };
                     warn!(
-                        "Failed to send queued message to {} at {}: {}",
-                        pubk_hash, address, reason
+                        "Failed to send queued message to {} at {:?}: {}",
+                        dest, address, reason
                     );
 
                     msg.retry.record_attempt(&self.retry_policy, now);
@@ -376,13 +391,13 @@ impl BrokerNode {
                     // If max attempts reached, move to dead letter queue
                     if self.retry_policy.is_exhausted(&msg.retry) {
                         warn!(
-                            "moving message to dead letter queue for {} at {} after {} attempts",
-                            pubk_hash,
+                            "moving message to dead letter queue for {} at {:?} after {} attempts",
+                            dest,
                             address,
                             msg.retry.get_attempts()
                         );
                         self.storage
-                            .enqueue_deadletter(&pubk_hash, &address, &raw)?;
+                            .enqueue_deadletter(&dest, address.as_ref(), &raw)?;
                         self.storage.remove(&key)?;
                     } else {
                         self.storage.set(&key, &serde_json::to_string(&msg)?)?;
@@ -482,13 +497,11 @@ impl BrokerNode {
                         (identifier, x, None)
                     }
                     QueueType::DeadLetterQueue => {
-                        // No receiver id in deadletter, use COMMS_ID as default
-                        let Some((pubk_hash, _)) =
+                        let Some((identifier, _)) =
                             self.discard_row_on_err(&key, BrokerNodeStorage::dest_from_key(&key))?
                         else {
                             continue;
                         };
-                        let identifier = Identifier::new(pubk_hash, COMMS_ID);
                         let Some(msg) =
                             self.discard_row_on_err(&key, serde_json::from_str::<OutgoingMsg>(&x))?
                         else {
@@ -1154,6 +1167,8 @@ mod tests {
         bitvmx
             .send_service(&emulator_id, "next job".to_string())
             .unwrap();
+        assert!(emulator.get().unwrap().is_none());
+        bitvmx.tick().unwrap();
         let reply = emulator.get().unwrap().unwrap();
         assert_eq!(reply.msg, "next job");
         assert_eq!(reply.from, bitvmx_id);
@@ -1162,6 +1177,166 @@ mod tests {
 
         bitvmx.close();
         drop(bitvmx);
+        cleanup_storage(port, 1);
+    }
+
+    #[test]
+    fn test_service_send_transaction_and_restart() {
+        use storage_backend::storage::KeyValueStore;
+
+        let port = 12032;
+        cleanup_storage(port, 1);
+        let local_id = Identifier::new("host".to_string(), 0);
+        let dest = Identifier::new("component".to_string(), 7);
+        let storage = get_storage(port);
+        let build = |storage: Rc<Storage>| {
+            let (allow, routing, settings) = get_allow_routing_settings();
+            BrokerNode::new_services(
+                "testservices",
+                SocketAddr::from(([127, 0, 0, 1], port)),
+                PRIVK1,
+                storage,
+                &tmp_path("broker_comms", port),
+                allow,
+                routing,
+                local_id.clone(),
+                settings,
+            )
+            .unwrap()
+        };
+        let mut node = build(storage.clone());
+        let channel = node.create_local_channel(dest.clone()).unwrap();
+
+        storage.begin_global_transaction().unwrap();
+        storage.set("program/state", "failed", None).unwrap();
+        node.send_service(&dest, "rolled back".to_string()).unwrap();
+        assert!(channel.get().unwrap().is_none());
+        storage.rollback_global_transaction().unwrap();
+        node.tick().unwrap();
+        assert!(channel.get().unwrap().is_none());
+        assert!(storage
+            .get::<_, String>("program/state", None)
+            .unwrap()
+            .is_none());
+        assert!(node
+            .storage
+            .sorted_keys(&QueueType::OutQueue, None)
+            .unwrap()
+            .is_empty());
+
+        storage.begin_global_transaction().unwrap();
+        storage.set("program/state", "ready", None).unwrap();
+        node.send_service(&dest, "committed".to_string()).unwrap();
+        storage.commit_global_transaction().unwrap();
+        assert!(channel.get().unwrap().is_none());
+        drop(channel);
+        node.close();
+        drop(node);
+        drop(storage);
+
+        // Reopen both stores before draining: a committed send survives restart.
+        let storage = get_storage(port);
+        let mut node = build(storage.clone());
+        let channel = node.create_local_channel(dest).unwrap();
+        assert_eq!(
+            storage
+                .get::<_, String>("program/state", None)
+                .unwrap()
+                .as_deref(),
+            Some("ready")
+        );
+        node.tick().unwrap();
+        let reply = channel.get().unwrap().unwrap();
+        assert_eq!(reply.msg, "committed");
+        assert_eq!(reply.from, local_id);
+        channel.ack(reply.uid).unwrap();
+        node.tick().unwrap();
+        assert!(channel.get().unwrap().is_none());
+        assert!(node
+            .storage
+            .sorted_keys(&QueueType::OutQueue, None)
+            .unwrap()
+            .is_empty());
+        drop(channel);
+        node.close();
+        drop(node);
+        drop(storage);
+        cleanup_storage(port, 1);
+    }
+
+    #[test]
+    fn test_service_send_preserves_queue_on_local_delivery_error() {
+        let port = 12034;
+        cleanup_storage(port, 1);
+        let local_id = Identifier::new("host".to_string(), 0);
+        let dest = Identifier::new("component".to_string(), 9);
+        let mut node = get_service_node(port, &local_id);
+        let channel = node.create_local_channel(dest.clone()).unwrap();
+        node.send_service(&dest, "retry me".to_string()).unwrap();
+        let keys = node
+            .storage
+            .sorted_keys(&QueueType::OutQueue, None)
+            .unwrap();
+        assert_eq!(keys.len(), 1);
+        let original = node.storage.get(&keys[0]).unwrap();
+
+        // Inject a local-channel error through an invalid sender identity.
+        node.local_channel = node
+            .server
+            .create_local_channel(Identifier::new("invalid/sender".to_string(), 0));
+        assert!(node.tick().is_err());
+        assert_eq!(node.storage.get(&keys[0]).unwrap(), original);
+        assert!(node.check_deadletter(None).unwrap().is_empty());
+        assert!(channel.get().unwrap().is_none());
+
+        node.local_channel = node.server.create_local_channel(local_id.clone());
+        node.tick().unwrap();
+        let message = channel.get().unwrap().unwrap();
+        assert_eq!(message.msg, "retry me");
+        assert_eq!(message.from, local_id);
+        assert!(node.storage.get(&keys[0]).unwrap().is_none());
+        drop(channel);
+        node.close();
+        drop(node);
+        cleanup_storage(port, 1);
+    }
+
+    #[test]
+    fn test_service_send_fifo_and_per_component_limit() {
+        let port = 12033;
+        cleanup_storage(port, 1);
+        let local_id = Identifier::new("host".to_string(), 0);
+        let mut node = get_service_node(port, &local_id);
+        node.broker_settings.rate_limiter_config.rate_limit_capacity = 100;
+        node.broker_settings
+            .broker_node_config
+            .max_msgs_per_tick_utilization = 0.1;
+        let max = node.max_msgs_per_tick(0.1);
+        assert_eq!(max, 5);
+        let dest1 = Identifier::new("shared".to_string(), 1);
+        let dest2 = Identifier::new("shared".to_string(), 2);
+        let channel1 = node.create_local_channel(dest1.clone()).unwrap();
+        let channel2 = node.create_local_channel(dest2.clone()).unwrap();
+        for i in 0..max + 2 {
+            node.send_service(&dest1, format!("first-{i}")).unwrap();
+            node.send_service(&dest2, format!("second-{i}")).unwrap();
+        }
+        for (start, count) in [(0, max), (max, 2)] {
+            node.tick().unwrap();
+            for (channel, prefix) in [(&channel1, "first"), (&channel2, "second")] {
+                let messages = channel.get_all().unwrap();
+                assert_eq!(messages.len(), count);
+                for (i, message) in messages.iter().enumerate() {
+                    assert_eq!(message.msg, format!("{prefix}-{}", start + i));
+                    assert_eq!(message.from, local_id);
+                    channel.ack(message.uid).unwrap();
+                }
+            }
+        }
+        drop(channel1);
+        drop(channel2);
+        node.close();
+        drop(node);
         cleanup_storage(port, 1);
     }
 

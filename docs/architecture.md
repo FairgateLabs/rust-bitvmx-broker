@@ -26,7 +26,7 @@ Node storage is strongly recommended to be transactional. A node removes a messa
 
 | Queue | Holds | Written by |
 |---|---|---|
-| Outgoing | Messages waiting to reach another broker, each with its retry state. | `send_peer` |
+| Outgoing | Messages waiting to reach another broker or a local component, each with its retry state. | `send_peer`, `send_service` |
 | Incoming | Messages that arrived and are waiting to be taken. | `tick`, from server storage |
 | Dead letter | Messages that ran out of delivery attempts, with the context they were sent under. | `tick`, when attempts are exhausted |
 
@@ -36,11 +36,11 @@ All three are persistent, so a restart resumes where it left off.
 
 Three paths, and which one a message takes decides whether it is durable before the call returns.
 
-**Queued, `BrokerNode::send_peer`.** The message is written to the outgoing queue with a fresh retry state and the call returns.The next `tick` walks the queue oldest first and delivers every message whose retry delay has elapsed. A delivered message is removed from the outgoing queue. A failed one has its attempt recorded and its next retry pushed further out. Once the attempts run out it moves to the dead letter queue. Each tick delivers at most a fixed number per destination, so one unreachable or slow destination cannot consume the whole pass.
+**Queued, `BrokerNode::send_peer` and `BrokerNode::send_service`.** The message is written to the outgoing queue in the caller's shared storage with a fresh retry state and the call returns. Enqueueing participates in the caller's global transaction; it is durable only when that transaction commits. Commit before calling `tick`, since delivery cannot be rolled back. The next `tick` walks the queue oldest first and delivers every message whose retry delay has elapsed. Peer destinations carry a socket address and are sent over the network. Service destinations carry their full component identifier, have no socket address, and are delivered through `LocalChannel::send`. A delivered message is removed from the outgoing queue. A failed peer delivery has its attempt recorded and its next retry pushed further out. A local delivery error propagates from `tick` and leaves the message queued rather than exhausting retries on a local storage failure. Once the attempts run out it moves to the dead letter queue. Each tick delivers at most a fixed number per destination, so one unreachable or slow destination cannot consume the whole pass.
 
 **Immediate over the network, `RemoteChannel::send` and `BrokerClient::send_msg`.** The call connects if needed, sends, and returns once the receiving broker has stored the message. There is no queue and no retry, so a failure is the caller's to handle.
 
-**Immediate in-process, `LocalChannel::send` and `BrokerNode::send_service`.** The message goes straight into server storage, with no network and no serialization. Note that this path does not pass the connection checks: the rate limit, the queue cap and the routing table are applied to what arrives over a connection, and a local send has no connection. Components sharing a process are inside the boundary those checks defend.
+**Immediate in-process, `LocalChannel::send`.** The message goes straight into server storage, with no network and no serialization. Note that this path does not pass the connection checks: the rate limit, the queue cap and the routing table are applied to what arrives over a connection, and a local send has no connection. Components sharing a process are inside the boundary those checks defend.
 
 ## Receiving a message
 
@@ -66,7 +66,7 @@ Steps 1 and 2 are the server and happen for any broker. Steps 3 and 4 are `Broke
 
 **Oldest first, within one queue.** Messages come back in the order their queue received them. Nothing is promised about the relative order of two messages that were sent by different senders.
 
-**Delivery is not a receipt.** A successful send means the destination's broker stored the message. It says nothing about whether the component behind it has acted on it, or is even running. 
+**Delivery is not a receipt.** A successful queued send means the outgoing entry was written, not that the destination received it. A successful direct channel send means the destination's broker stored the message. Neither says whether the component behind it has acted on it, or is even running. If a process stops after delivery but before removing the outgoing entry, a later tick can deliver it again.
 
 **Nothing is dropped silently.** A message that runs out of delivery attempts ends up in the dead letter queue with the context it was sent under, so the sender can tell which piece of work was lost. Entries stay until they are taken. This one needs a `BrokerNode`, since it is the only type that retries.
 
