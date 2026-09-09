@@ -26,7 +26,7 @@ Node storage is strongly recommended to be transactional. A node removes a messa
 
 | Queue | Holds | Written by |
 |---|---|---|
-| Outgoing | Messages waiting to reach another broker, each with its retry state. | `send_peer` |
+| Outgoing | Peer messages with retry state, or service messages with their full destination identifier. | `send_peer` or `send_service`, depending on node mode |
 | Incoming | Messages that arrived and are waiting to be taken. | `tick`, from server storage |
 | Dead letter | Messages that ran out of delivery attempts, with the context they were sent under. | `tick`, when attempts are exhausted |
 
@@ -34,13 +34,15 @@ All three are persistent, so a restart resumes where it left off.
 
 ## Sending a message
 
-Three paths, and which one a message takes decides whether it is durable before the call returns.
+Four paths: node sends persist in the outgoing queue before returning; channel sends write to server storage directly.
 
-**Queued, `BrokerNode::send_peer`.** The message is written to the outgoing queue with a fresh retry state and the call returns.The next `tick` walks the queue oldest first and delivers every message whose retry delay has elapsed. A delivered message is removed from the outgoing queue. A failed one has its attempt recorded and its next retry pushed further out. Once the attempts run out it moves to the dead letter queue. Each tick delivers at most a fixed number per destination, so one unreachable or slow destination cannot consume the whole pass.
+**Queued, `BrokerNode::send_peer`.** The message is written to the outgoing queue with a fresh retry state and the call returns. The next `tick` walks the queue oldest first and delivers every message whose retry delay has elapsed. A delivered message is removed from the outgoing queue. A failed one has its attempt recorded and its next retry pushed further out. Once the attempts run out it moves to the dead letter queue. Each tick delivers at most a fixed number per destination, so one unreachable or slow destination cannot consume the whole pass.
+
+**Queued in-process, `BrokerNode::send_service`.** The full destination identifier and payload are serialized into the outgoing queue. The next `tick` walks it oldest first, sends each message through `LocalChannel::send`, and removes it only after a successful send. This flow has no per-tick limit, retry backoff or dead letter handling. A send error stops the tick and leaves the message queued for a later tick.
 
 **Immediate over the network, `RemoteChannel::send` and `BrokerClient::send_msg`.** The call connects if needed, sends, and returns once the receiving broker has stored the message. There is no queue and no retry, so a failure is the caller's to handle.
 
-**Immediate in-process, `LocalChannel::send` and `BrokerNode::send_service`.** The message goes straight into server storage, with no network and no serialization. Note that this path does not pass the connection checks: the rate limit, the queue cap and the routing table are applied to what arrives over a connection, and a local send has no connection. Components sharing a process are inside the boundary those checks defend.
+**Immediate in-process, `LocalChannel::send`.** The message goes straight into server storage, with no network and no serialization. Note that this path does not pass the connection checks: the rate limit, the queue cap and the routing table are applied to what arrives over a connection, and a local send has no connection. Components sharing a process are inside the boundary those checks defend. Queued service delivery uses this same local path and bypasses the same checks.
 
 ## Receiving a message
 
@@ -55,7 +57,7 @@ Steps 1 and 2 are the server and happen for any broker. Steps 3 and 4 are `Broke
 
 *`BrokerNode` only.* One pass, in order:
 
-1. **Outgoing.** Deliver what is due, retry what failed, retire what is exhausted to the dead letter queue.
+1. **Outgoing, selected by node mode.** Peers deliver what is due, retry what failed, and retire what is exhausted to the dead letter queue. Services drain the outgoing queue through the local channel without retry backoff or a per-tick limit.
 2. **Incoming.** Move what the server received into the incoming queue and acknowledge it on the server side.
 
 ## Delivery guarantees
@@ -66,9 +68,9 @@ Steps 1 and 2 are the server and happen for any broker. Steps 3 and 4 are `Broke
 
 **Oldest first, within one queue.** Messages come back in the order their queue received them. Nothing is promised about the relative order of two messages that were sent by different senders.
 
-**Delivery is not a receipt.** A successful send means the destination's broker stored the message. It says nothing about whether the component behind it has acted on it, or is even running. 
+**Delivery is not a receipt.** A successful node send means the outgoing queue stored the message, not that it has been delivered. A successful channel send means the destination's server storage holds it. It says nothing about whether the component behind it has acted on it, or is even running. 
 
-**Nothing is dropped silently.** A message that runs out of delivery attempts ends up in the dead letter queue with the context it was sent under, so the sender can tell which piece of work was lost. Entries stay until they are taken. This one needs a `BrokerNode`, since it is the only type that retries.
+**Nothing is dropped silently.** A message that runs out of delivery attempts ends up in the dead letter queue with the context it was sent under, so the sender can tell which piece of work was lost. Entries stay until they are taken. This applies to peer-mode `BrokerNode` delivery; service-mode send failures remain in the outgoing queue.
 
 ## Error severity
 
@@ -91,10 +93,10 @@ The distinction matters because a refused message and an unusable process arrive
 | `rate_limiter_config` | `rate_limit_capacity` | Requests one sender may make before it has to wait. | Any receiving broker |
 | | `rate_limit_refill_rate` | How fast that budget returns, per second. | Any receiving broker |
 | | `tokens_per_message` | Requests charged per message sent. | Any receiving broker |
-| `broker_node_config` | `max_msgs_per_tick_utilization` | Share of the rate budget one tick may spend, per destination when delivering and in total when collecting. | `BrokerNode` |
-| | `max_send_attempts` | Delivery attempts before a message is retired to the dead letter queue. | `BrokerNode` |
-| | `retry_min_delay_msecs` | Delay before the first retry. | `BrokerNode` |
-| | `retry_max_delay_msecs` | Ceiling on the delay, which grows with each attempt. | `BrokerNode` |
+| `broker_node_config` | `max_msgs_per_tick_utilization` | Share of the rate budget one tick may spend, per destination when delivering peer messages and in total when collecting in either mode. | `BrokerNode` |
+| | `max_send_attempts` | Delivery attempts before a message is retired to the dead letter queue. | Peer-mode `BrokerNode` |
+| | `retry_min_delay_msecs` | Delay before the first retry. | Peer-mode `BrokerNode` |
+| | `retry_max_delay_msecs` | Ceiling on the delay, which grows with each attempt. | Peer-mode `BrokerNode` |
 | `msg_size_config` | `max_frame_size_kb` | Largest message accepted, measured as it travels. | Any broker, and the sender |
 | `queue_config` | `max_queue_depth` | Messages one sender may have waiting for one destination. | Any receiving broker |
 

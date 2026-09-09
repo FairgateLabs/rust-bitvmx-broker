@@ -25,7 +25,7 @@ It is not production-ready, has not been audited, and future updates may introdu
 - ✅ **Allow list**: which identities may connect, pinned to an IP.
 - 🗺️ **Routing table**: which identity may send to which, with wildcards.
 - 💾 **Persistent queues**: outgoing, incoming, and dead letter queues survive a restart, backed by `rust-bitvmx-storage-backend`.
-- 🔁 **Automatic retries**: undelivered messages are retried with a growing delay and land in the dead letter queue once their attempts run out.
+- 🔁 **Automatic peer retries**: undelivered peer messages are retried with a growing delay and land in the dead letter queue once their attempts run out.
 - ⏱️ **Rate limiting** per sender, plus caps on message size and queue depth.
 - 🧭 **Error severity**: every error reports whether it is fatal, so a refused message does not have to stop a process.
 
@@ -33,7 +33,7 @@ It is not production-ready, has not been audited, and future updates may introdu
 
 | Type | What it is | Operations |
 |---|---|---|
-| `BrokerNode` | A client and a server in one. Listens for other brokers and sends to them, with persistent queues in between. | `tick` deliver the outgoing queue and collect what arrived<br>`send_peer` queue a message for a broker on another machine<br>`send_service` hand a message to a component on this broker<br>`check_receive` take what arrived, oldest first<br>`check_deadletter` take what ran out of attempts, with its context<br>`create_local_channel` give a component its own channel<br>`get_pubk_hash` / `get_address` / `get_local_id` how others address this node<br>`close` stop the listener and drain connections in flight |
+| `BrokerNode` | A client and a server in one. Listens for other brokers and sends to them, with persistent queues in between. | `tick` deliver the outgoing queue and collect what arrived<br>`send_peer` queue a message for a broker on another machine<br>`send_service` queue a message for a component on this broker<br>`check_receive` take what arrived, oldest first<br>`check_deadletter` take what ran out of attempts, with its context<br>`create_local_channel` give a component its own channel<br>`get_pubk_hash` / `get_address` / `get_local_id` how others address this node<br>`close` stop the listener and drain connections in flight |
 | `BrokerServer` | The receiving half on its own. A TLS listener plus the storage that holds messages for the destinations it serves. | `create_local_channel` and `close`, as above |
 | `RemoteChannel` | Reaches a broker over the network. For a component in another process, or on another machine. | `send` send to a destination identifier<br>`send_server` address the broker itself<br>`get` read the oldest message waiting<br>`ack` acknowledge by uid |
 | `LocalChannel` | Reaches a broker in the same process. No network and no serialization. Only a broker can hand one out. | `send`, `get` and `ack`, as above<br>`get_all` read everything waiting, oldest first |
@@ -45,7 +45,7 @@ The allow list and the routing table are held behind a lock and reachable at run
 
 A `BrokerNode` is built in one of two modes, and the mode decides which send method is available:
 - **Peers** (`new_peers`): talks to brokers on other machines. It accepts only messages addressed to itself, and `send_peer` queues a message for another broker, which `tick` delivers.
-- **Services** (`new_services`): serves several components inside one process. It takes a routing table naming who may talk to whom, and `send_service` hands a message to another component on the same broker.
+- **Services** (`new_services`): serves several components inside one process. It takes a routing table naming who may talk to whom, and `send_service` queues a message for another component on the same broker, which `tick` delivers through the local channel.
 
 Both are built either from values or from file paths, with `new_peers_with_paths` and `new_services_with_paths` reading the key, the allow list, and the routing table from disk.
 
@@ -55,7 +55,7 @@ See [`docs/architecture.md`](docs/architecture.md) for how the two fit together.
 ## Behaviour to know
 
 - **Receiving happens on its own.** The listener accepts connections and stores what arrives whether or not anything is ticking. Messages wait in storage until a `tick` moves them into the incoming queue, and `check_receive` then hands them to the caller.
-- **`send_peer` is the only send that waits for a `tick`.**. `send_service` and the channel sends reach storage immediately.
+- **Both node sends wait for a `tick`.** `send_peer` and `send_service` persist messages in the outgoing queue first. Channel sends reach server storage immediately.
 - **Receivers must be idempotent.** Delivery is at-least-once, so the same message can arrive twice.
 - **Take messages, then acknowledge.** `get` and `ack` are separate so that a caller which stops midway resumes from the last acknowledged message instead of losing what it was holding.
 - **Check `is_fatal` before stopping.** Some errors mean one message or one peer was refused, not that the process cannot continue.
