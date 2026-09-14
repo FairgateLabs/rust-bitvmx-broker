@@ -10,7 +10,7 @@ use std::{
 };
 use tracing::info;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AllowList {
     allow_list: HashMap<PubkHash, Option<IpAddr>>, // (pubkey_hash, IpAddr). None means wildcard for IP
     allow_all: bool,                               // if true, all pubkey_hashes are allowed

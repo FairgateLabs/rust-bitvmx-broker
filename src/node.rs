@@ -37,7 +37,7 @@ pub enum ReceivedMessage {
 }
 
 // What the node was built for. Peers talk to other brokers over the network, services hand messages
-// to components that share this process. Only the constructors and send differ, the rest is common.
+// to components that share this process. Constructors, send and out queue processing differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NodeMode {
     Peers,
@@ -89,6 +89,9 @@ impl BrokerNode {
         mode: NodeMode,
         broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
+        local_id
+            .validate()
+            .map_err(crate::storage::BrokerStorageError::InvalidIdentifier)?;
         let cert = Cert::new_with_privk(server_privk)?;
         let broker_config = BrokerConfig::new(
             address.port(),
@@ -291,11 +294,18 @@ impl BrokerNode {
         Ok(())
     }
 
-    /// Hand a message to another component on this broker.
+    /// Queue a message for another component on this broker. The out queue is drained by `tick`.
     /// This can only be called on a node created with [`BrokerNode::new_services`],
     pub fn send_service(&self, dest: &Identifier, data: String) -> Result<(), BrokerError> {
         self.require_mode(NodeMode::Services)?;
-        self.local_channel.send(dest, data)
+        dest.validate()
+            .map_err(crate::storage::BrokerStorageError::InvalidIdentifier)?;
+        self.storage.enqueue_out(
+            &dest.pubkey_hash,
+            &self.address,
+            &serde_json::to_string(&(dest, data))?,
+        )?;
+        Ok(())
     }
 
     /// Removes a row that could not be read and reports it as absent, so the caller skips it and
@@ -316,6 +326,28 @@ impl BrokerNode {
     }
 
     fn process_out_queue(&self) -> Result<(), BrokerError> {
+        match self.mode {
+            NodeMode::Peers => self.process_peer_out_queue(),
+            NodeMode::Services => self.process_service_out_queue(),
+        }
+    }
+
+    fn process_service_out_queue(&self) -> Result<(), BrokerError> {
+        for key in self.storage.sorted_keys(&QueueType::OutQueue, None)? {
+            if let Some(raw) = self.storage.get(&key)? {
+                let Some((dest, data)) = self
+                    .discard_row_on_err(&key, serde_json::from_str::<(Identifier, String)>(&raw))?
+                else {
+                    continue;
+                };
+                self.local_channel.send(&dest, data)?;
+                self.storage.remove(&key)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn process_peer_out_queue(&self) -> Result<(), BrokerError> {
         // send up to 50% of max capacity messages per tick
         let mut sent_per_dest: HashMap<String, usize> = HashMap::new();
         let max_per_dest = self.max_msgs_per_tick(
@@ -1154,6 +1186,13 @@ mod tests {
         bitvmx
             .send_service(&emulator_id, "next job".to_string())
             .unwrap();
+        assert!(emulator.get().unwrap().is_none());
+        bitvmx.tick().unwrap();
+        assert!(bitvmx
+            .storage
+            .sorted_keys(&QueueType::OutQueue, None)
+            .unwrap()
+            .is_empty());
         let reply = emulator.get().unwrap().unwrap();
         assert_eq!(reply.msg, "next job");
         assert_eq!(reply.from, bitvmx_id);
