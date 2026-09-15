@@ -197,8 +197,8 @@ impl Cert {
     ) -> Result<rustls::pki_types::CertificateDer<'static>, BrokerError> {
         Ok(self.ca_der.into())
     }
-    pub fn get_pubk_hash(&self) -> Result<PubkHash, BrokerError> {
-        Ok(self.pubk_hash.clone())
+    pub fn get_pubk_hash(&self) -> PubkHash {
+        self.pubk_hash.clone()
     }
 
     // SPKI format:
@@ -424,8 +424,8 @@ mod tests {
         let with_explicit_ca = Cert::new_with_privk_and_ca(&key, CA_KEY).unwrap();
 
         // The identity follows the key, not the certificate built around it.
-        let hash = from_privk.get_pubk_hash().unwrap();
-        assert_eq!(with_explicit_ca.get_pubk_hash().unwrap(), hash);
+        let hash = from_privk.get_pubk_hash();
+        assert_eq!(with_explicit_ca.get_pubk_hash(), hash);
         assert_eq!(hash.len(), 64); // Hex of a SHA256 digest.
 
         // What the allow list compares at handshake time is derived from the certificate on the wire.
@@ -443,7 +443,7 @@ mod tests {
 
         // A different key is a different identity.
         let generated = new_simple_cert().unwrap();
-        assert_ne!(generated.get_pubk_hash().unwrap(), hash);
+        assert_ne!(generated.get_pubk_hash(), hash);
         assert!(generated.get_private_key().is_ok());
     }
 
@@ -458,12 +458,12 @@ mod tests {
         Cert::generate_key_file(&nested, "node", &mut OsRng, TEST_RSA_BITS).unwrap();
 
         let from_key = Cert::from_key_file(&format!("{nested}/node.key")).unwrap();
-        let hash = from_key.get_pubk_hash().unwrap();
+        let hash = from_key.get_pubk_hash();
 
         // from_file reads a certificate beside the key and takes the identity from the certificate.
         std::fs::write(format!("{nested}/node.pem"), &from_key.cert_pem).unwrap();
         let from_file = Cert::from_file(&nested, "node").unwrap();
-        assert_eq!(from_file.get_pubk_hash().unwrap(), hash);
+        assert_eq!(from_file.get_pubk_hash(), hash);
 
         // A missing file is reported.
         assert!(Cert::from_key_file(&format!("{nested}/absent.key")).is_err());
