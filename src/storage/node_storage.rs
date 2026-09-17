@@ -9,7 +9,10 @@ use crate::rpc::Message;
 use crate::storage::errors::BrokerStorageError;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use storage_backend::storage::{KeyValueStore, Storage};
+use storage_backend::{
+    key::StorageKey,
+    storage::{KeyValueStore, Storage},
+};
 use tracing::warn;
 
 pub enum QueueType {
@@ -41,36 +44,41 @@ impl BrokerNodeStorage {
         }
     }
 
+    fn broker_key<'a>(
+        &self,
+        queue: &QueueType,
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> StorageKey {
+        StorageKey::new(
+            ["broker", queue.as_str(), self.name.as_str()]
+                .into_iter()
+                .map(str::to_string)
+                .chain(tail.into_iter().map(str::to_string)),
+        )
+    }
+
     fn msg_key(
         &self,
         queue: &QueueType,
         uid: u64,
         pubk_hash: &str,
         tag: &str,
-    ) -> Result<String, BrokerStorageError> {
+    ) -> Result<StorageKey, BrokerStorageError> {
         validate_pubkey_hash(pubk_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
-        Ok(format!(
-            "broker/{}/{}/msgs/{}/{}/{}",
-            queue.as_str(),
-            self.name,
-            uid,
-            pubk_hash,
-            tag
-        ))
+        Ok(self.broker_key(queue, ["msgs", uid.to_string().as_str(), pubk_hash, tag]))
     }
 
     fn msgs_prefix(&self, queue: &QueueType) -> String {
-        format!("broker/{}/{}/msgs/", queue.as_str(), self.name)
+        self.broker_key(queue, ["msgs"]).to_scan_prefix()
     }
 
-    fn uid_key(&self, queue: &QueueType) -> String {
-        format!("broker/{}/{}/uid", queue.as_str(), self.name)
+    fn uid_key(&self, queue: &QueueType) -> StorageKey {
+        self.broker_key(queue, ["uid"])
     }
 
     fn next_uid(&self, queue: &QueueType) -> Result<u64, BrokerStorageError> {
-        let key = self.uid_key(queue);
-        let uid: u64 = self.storage.get(&key, None)?.unwrap_or(0) + 1;
-        self.storage.set(&key, uid, None)?;
+        let uid: u64 = self.storage.get(self.uid_key(queue), None)?.unwrap_or(0) + 1;
+        self.storage.set(self.uid_key(queue), uid, None)?;
         Ok(uid)
     }
 
@@ -123,16 +131,17 @@ impl BrokerNodeStorage {
     }
 
     pub fn get(&self, key: &str) -> Result<Option<String>, BrokerStorageError> {
-        Ok(self.storage.get(key, None)?)
+        Ok(self.storage.get(StorageKey::from_joined(key), None)?)
     }
 
     pub fn set(&self, key: &str, value: &str) -> Result<(), BrokerStorageError> {
-        self.storage.set(key, value, None)?;
+        self.storage
+            .set(StorageKey::from_joined(key), value, None)?;
         Ok(())
     }
 
     pub fn remove(&self, key: &str) -> Result<(), BrokerStorageError> {
-        self.storage.remove(key, None)?;
+        self.storage.remove(StorageKey::from_joined(key), None)?;
         Ok(())
     }
 
@@ -144,7 +153,7 @@ impl BrokerNodeStorage {
     ) -> Result<(), BrokerStorageError> {
         let uid = self.next_uid(&QueueType::OutQueue)?;
         let key = self.msg_key(&QueueType::OutQueue, uid, pubk_hash, &address.to_string())?;
-        self.storage.set(&key, raw, None)?;
+        self.storage.set(key, raw, None)?;
         Ok(())
     }
 
@@ -161,7 +170,7 @@ impl BrokerNodeStorage {
             pubk_hash,
             &address.to_string(),
         )?;
-        self.storage.set(&key, raw, None)?;
+        self.storage.set(key, raw, None)?;
         Ok(())
     }
 
@@ -184,7 +193,7 @@ impl BrokerNodeStorage {
                     continue;
                 }
             };
-            self.storage.set(&key, msg.msg.clone(), Some(tx))?;
+            self.storage.set(key, msg.msg.clone(), Some(tx))?;
         }
         self.storage.commit_transaction(tx)?;
         Ok(())
