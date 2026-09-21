@@ -34,38 +34,43 @@ impl BrokerServerStorage {
         })
     }
 
-    fn broker_key<'a>(namespace: &[&str], tail: impl IntoIterator<Item = &'a str>) -> StorageKey {
-        StorageKey::new(
+    fn broker_key<'a>(
+        namespace: &[&str],
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, BrokerStorageError> {
+        Ok(StorageKey::new(
             std::iter::once("broker")
                 .chain(namespace.iter().copied())
                 .map(str::to_string)
                 .chain(tail.into_iter().map(str::to_string)),
-        )
+        )?)
     }
 
-    fn msgs_key<'a>(tail: impl IntoIterator<Item = &'a str>) -> StorageKey {
+    fn msgs_key<'a>(
+        tail: impl IntoIterator<Item = &'a str>,
+    ) -> Result<StorageKey, BrokerStorageError> {
         Self::broker_key(&["msgs"], tail)
     }
 
-    fn uid_key() -> StorageKey {
+    fn uid_key() -> Result<StorageKey, BrokerStorageError> {
         Self::broker_key(&["uid"], [])
     }
 
-    fn msgs_scan_prefix(dest: &Identifier) -> String {
-        Self::msgs_key([dest.to_string().as_str()]).to_scan_prefix()
+    fn msgs_scan_prefix(dest: &Identifier) -> Result<String, BrokerStorageError> {
+        Ok(Self::msgs_key([dest.to_string().as_str()])?.to_scan_prefix())
     }
 
-    fn msg_scan_prefix_for_uid(dest: &Identifier, uid: u64) -> String {
-        Self::msgs_key([dest.to_string().as_str(), format_uid(uid).as_str()]).to_scan_prefix()
+    fn msg_scan_prefix_for_uid(dest: &Identifier, uid: u64) -> Result<String, BrokerStorageError> {
+        Ok(Self::msgs_key([dest.to_string().as_str(), format_uid(uid).as_str()])?.to_scan_prefix())
     }
 
     fn count_key(from: &Identifier, dest: &Identifier) -> Result<StorageKey, BrokerStorageError> {
         validate_pubkey_hash(&from.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
         validate_pubkey_hash(&dest.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
-        Ok(Self::broker_key(
+        Self::broker_key(
             &["count"],
             [from.to_string().as_str(), dest.to_string().as_str()],
-        ))
+        )
     }
 
     fn msg_key(
@@ -75,11 +80,11 @@ impl BrokerServerStorage {
     ) -> Result<StorageKey, BrokerStorageError> {
         validate_pubkey_hash(&dest.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
         validate_pubkey_hash(&from.pubkey_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
-        Ok(Self::msgs_key([
+        Self::msgs_key([
             dest.to_string().as_str(),
             format_uid(uid).as_str(),
             from.to_string().as_str(),
-        ]))
+        ])
     }
 
     // Splits "broker/msgs/{dest}/{uid}/{from}" into the uid and the sender.
@@ -112,12 +117,12 @@ impl BrokerServerStorage {
     // The oldest message waiting for dest.
     pub fn get(&self, dest: Identifier) -> Result<Option<Message>, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
-        let prefix = Self::msgs_scan_prefix(&dest);
+        let prefix = Self::msgs_scan_prefix(&dest)?;
         let keys = storage.partial_compare_keys_limited(&prefix, Some(1), None)?;
         let Some(key) = keys.first() else {
             return Ok(None);
         };
-        let Some(msg) = storage.get(StorageKey::from_joined(key), None)? else {
+        let Some(msg) = storage.get(StorageKey::from_joined(key)?, None)? else {
             return Ok(None);
         };
         let (uid, from) = Self::decode_key(key)?;
@@ -133,14 +138,14 @@ impl BrokerServerStorage {
     ) -> Result<Vec<Message>, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
         // Already ordered by uid.
-        let mut keys = storage.partial_compare_keys(&Self::msgs_scan_prefix(&dest), None)?;
+        let mut keys = storage.partial_compare_keys(&Self::msgs_scan_prefix(&dest)?, None)?;
         if let Some(max) = max {
             keys.truncate(max);
         }
 
         let mut messages = Vec::new();
         for key in keys {
-            if let Some(msg) = storage.get(StorageKey::from_joined(&key), None)? {
+            if let Some(msg) = storage.get(StorageKey::from_joined(&key)?, None)? {
                 let (uid, from) = Self::decode_key(&key)?;
                 messages.push(Message { uid, from, msg });
             }
@@ -150,7 +155,7 @@ impl BrokerServerStorage {
 
     pub fn remove(&self, dest: Identifier, uid: u64) -> Result<bool, BrokerStorageError> {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
-        let prefix = Self::msg_scan_prefix_for_uid(&dest, uid);
+        let prefix = Self::msg_scan_prefix_for_uid(&dest, uid)?;
         let keys = storage.partial_compare_keys(&prefix, None)?;
         if keys.len() != 1 {
             // No such message stored for this destination. Reached when the uid was already
@@ -166,7 +171,7 @@ impl BrokerServerStorage {
 
         let tx = storage.begin_transaction();
         let removed = storage
-            .remove(StorageKey::from_joined(&keys[0]), Some(tx))
+            .remove(StorageKey::from_joined(&keys[0])?, Some(tx))
             .and_then(|_| storage.set(count_key, count.saturating_sub(1), Some(tx)));
 
         match removed {
@@ -192,13 +197,13 @@ impl BrokerServerStorage {
         let count_key = Self::count_key(&from, &dest)?;
         let count: u64 = storage.get(count_key.clone(), None)?.unwrap_or(0);
 
-        let uid: u64 = storage.get(Self::uid_key(), None)?.unwrap_or(0) + 1;
+        let uid: u64 = storage.get(Self::uid_key()?, None)?.unwrap_or(0) + 1;
         let key = Self::msg_key(&dest, uid, &from)?;
 
         // The new uid, the message it names and the count of stored messages are written together.
         let tx = storage.begin_transaction();
         let written = storage
-            .set(Self::uid_key(), uid, Some(tx))
+            .set(Self::uid_key()?, uid, Some(tx))
             .and_then(|_| storage.set(key, msg, Some(tx)))
             .and_then(|_| storage.set(count_key, count + 1, Some(tx)));
 

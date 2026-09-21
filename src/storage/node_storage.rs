@@ -48,13 +48,13 @@ impl BrokerNodeStorage {
         &self,
         queue: &QueueType,
         tail: impl IntoIterator<Item = &'a str>,
-    ) -> StorageKey {
-        StorageKey::new(
+    ) -> Result<StorageKey, BrokerStorageError> {
+        Ok(StorageKey::new(
             ["broker", queue.as_str(), self.name.as_str()]
                 .into_iter()
                 .map(str::to_string)
                 .chain(tail.into_iter().map(str::to_string)),
-        )
+        )?)
     }
 
     fn msg_key(
@@ -65,20 +65,20 @@ impl BrokerNodeStorage {
         tag: &str,
     ) -> Result<StorageKey, BrokerStorageError> {
         validate_pubkey_hash(pubk_hash).map_err(BrokerStorageError::InvalidIdentifier)?;
-        Ok(self.broker_key(queue, ["msgs", uid.to_string().as_str(), pubk_hash, tag]))
+        self.broker_key(queue, ["msgs", uid.to_string().as_str(), pubk_hash, tag])
     }
 
-    fn msgs_prefix(&self, queue: &QueueType) -> String {
-        self.broker_key(queue, ["msgs"]).to_scan_prefix()
+    fn msgs_prefix(&self, queue: &QueueType) -> Result<String, BrokerStorageError> {
+        Ok(self.broker_key(queue, ["msgs"])?.to_scan_prefix())
     }
 
-    fn uid_key(&self, queue: &QueueType) -> StorageKey {
+    fn uid_key(&self, queue: &QueueType) -> Result<StorageKey, BrokerStorageError> {
         self.broker_key(queue, ["uid"])
     }
 
     fn next_uid(&self, queue: &QueueType) -> Result<u64, BrokerStorageError> {
-        let uid: u64 = self.storage.get(self.uid_key(queue), None)?.unwrap_or(0) + 1;
-        self.storage.set(self.uid_key(queue), uid, None)?;
+        let uid: u64 = self.storage.get(self.uid_key(queue)?, None)?.unwrap_or(0) + 1;
+        self.storage.set(self.uid_key(queue)?, uid, None)?;
         Ok(uid)
     }
 
@@ -117,7 +117,7 @@ impl BrokerNodeStorage {
     ) -> Result<Vec<String>, BrokerStorageError> {
         let mut keys = self
             .storage
-            .partial_compare_keys(&self.msgs_prefix(queue), None)?;
+            .partial_compare_keys(&self.msgs_prefix(queue)?, None)?;
         keys.sort_by_key(|key| {
             key.split('/')
                 .nth(4) // index position
@@ -131,17 +131,17 @@ impl BrokerNodeStorage {
     }
 
     pub fn get(&self, key: &str) -> Result<Option<String>, BrokerStorageError> {
-        Ok(self.storage.get(StorageKey::from_joined(key), None)?)
+        Ok(self.storage.get(StorageKey::from_joined(key)?, None)?)
     }
 
     pub fn set(&self, key: &str, value: &str) -> Result<(), BrokerStorageError> {
         self.storage
-            .set(StorageKey::from_joined(key), value, None)?;
+            .set(StorageKey::from_joined(key)?, value, None)?;
         Ok(())
     }
 
     pub fn remove(&self, key: &str) -> Result<(), BrokerStorageError> {
-        self.storage.remove(StorageKey::from_joined(key), None)?;
+        self.storage.remove(StorageKey::from_joined(key)?, None)?;
         Ok(())
     }
 
