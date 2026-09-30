@@ -26,7 +26,6 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tarpc::client::RpcError;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{
     fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter,
@@ -432,8 +431,10 @@ fn test_dinamic_allow_list() {
     user1
         .send(&client2.get_identifier(), "Hello!".to_string())
         .unwrap();
-    let msg = recv_and_ack(&user2).unwrap_err();
-    assert!(matches!(msg, BrokerError::RpcError(RpcError::Channel(_))));
+    // TLS 1.3 does not guarantee which side observes a rejected client certificate first.
+    // The RPC may see a closed channel, or the TLS handshake may return the peer's alert directly.
+    // The behavior under test is that the unauthorized client cannot receive the message.
+    assert!(recv_and_ack(&user2).is_err());
 
     allow_list
         .lock()
