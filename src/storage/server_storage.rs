@@ -167,7 +167,7 @@ impl BrokerServerStorage {
         // The sender is part of the key, so the pair whose count drops is read back out of it.
         let (_, from) = Self::decode_key(&keys[0])?;
         let count_key = Self::count_key(&from, &dest)?;
-        let count: u64 = storage.get(count_key.clone(), None)?.unwrap_or(0);
+        let count: u64 = storage.get(&count_key, None)?.unwrap_or(0);
 
         let tx = storage.begin_transaction();
         let removed = storage
@@ -195,7 +195,7 @@ impl BrokerServerStorage {
         let storage = self.storage.lock_or_err::<BrokerStorageError>("storage")?;
 
         let count_key = Self::count_key(&from, &dest)?;
-        let count: u64 = storage.get(count_key.clone(), None)?.unwrap_or(0);
+        let count: u64 = storage.get(&count_key, None)?.unwrap_or(0);
 
         let uid: u64 = storage.get(Self::uid_key()?, None)?.unwrap_or(0) + 1;
         let key = Self::msg_key(&dest, uid, &from)?;
