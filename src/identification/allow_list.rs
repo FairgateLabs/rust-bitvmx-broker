@@ -47,7 +47,7 @@ impl AllowList {
     ) -> Result<Arc<Mutex<Self>>, BrokerError> {
         let mut allow_list = HashMap::new();
         for (cert, addr) in certs.into_iter().zip(addrs) {
-            let pubkey_hash = cert.get_pubk_hash()?;
+            let pubkey_hash = cert.get_pubk_hash();
             allow_list.insert(pubkey_hash, Some(addr));
         }
         Ok(Arc::new(Mutex::new(Self {
@@ -101,12 +101,12 @@ impl AllowList {
     }
 
     pub fn remove_by_cert(&mut self, cert: &Cert) -> Result<(), BrokerError> {
-        let pubkey_hash = cert.get_pubk_hash()?;
+        let pubkey_hash = cert.get_pubk_hash();
         self.allow_list.remove(&pubkey_hash);
         Ok(())
     }
     pub fn add_by_cert(&mut self, cert: &Cert, addr: IpAddr) -> Result<(), BrokerError> {
-        let pubkey_hash = cert.get_pubk_hash()?;
+        let pubkey_hash = cert.get_pubk_hash();
         self.allow_list.insert(pubkey_hash, Some(addr));
         Ok(())
     }
@@ -264,10 +264,7 @@ mod tests {
         let local_addr = addr_from_str("127.0.0.1").unwrap();
         let other_addr = addr_from_str("127.0.0.2").unwrap();
         let (kept, dropped) = (new_simple_cert().unwrap(), new_simple_cert().unwrap());
-        let (kept_hash, dropped_hash) = (
-            kept.get_pubk_hash().unwrap(),
-            dropped.get_pubk_hash().unwrap(),
-        );
+        let (kept_hash, dropped_hash) = (kept.get_pubk_hash(), dropped.get_pubk_hash());
 
         // from_certs pins each certificate to the address given in the same position.
         let allow_list = AllowList::from_certs(

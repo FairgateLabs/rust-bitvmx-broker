@@ -109,7 +109,7 @@ struct KeyPair {
 impl KeyPair {
     fn new(privk: &str, port: u16) -> Self {
         let cert = Cert::new_with_privk(privk).unwrap();
-        let pubk_hash = cert.get_pubk_hash().unwrap();
+        let pubk_hash = cert.get_pubk_hash();
         Self {
             privk: privk.to_string(),
             pubk_hash,
@@ -119,7 +119,7 @@ impl KeyPair {
     }
     fn new_with_id(privk: &str, id: u8, port: u16) -> Self {
         let cert = Cert::new_with_privk(privk).unwrap();
-        let pubk_hash = cert.get_pubk_hash().unwrap();
+        let pubk_hash = cert.get_pubk_hash();
         Self {
             privk: privk.to_string(),
             pubk_hash,
@@ -1088,8 +1088,8 @@ fn test_readme_example() {
     // Create BrokerClientAsync
     let client1_cert = Cert::new_simple().unwrap();
     let client2_cert = Cert::new_simple().unwrap();
-    let client1_identifier = Identifier::new(client1_cert.get_pubk_hash().unwrap(), 0);
-    let client2_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
+    let client1_identifier = Identifier::new(client1_cert.get_pubk_hash(), 0);
+    let client2_identifier = Identifier::new(client2_cert.get_pubk_hash(), 0);
 
     // Add clients to allow list
     allow_list
@@ -1115,7 +1115,7 @@ fn test_readme_example() {
         )
         .unwrap();
 
-    let destination_identifier = Identifier::new(client2_cert.get_pubk_hash().unwrap(), 0);
+    let destination_identifier = Identifier::new(client2_cert.get_pubk_hash(), 0);
 
     let client1 = BrokerClient::new(&config, client1_cert, allow_list).unwrap();
 
@@ -1234,7 +1234,7 @@ fn test_testing_only_constructors() {
     // Generates the certificate and reports the identity it produced, so no key has to be supplied.
     let (config, server_id, server_cert) =
         BrokerConfig::new_only_address(port, Some(IpAddr::V4(Ipv4Addr::LOCALHOST))).unwrap();
-    assert_eq!(server_id.pubkey_hash, server_cert.get_pubk_hash().unwrap());
+    assert_eq!(server_id.pubkey_hash, server_cert.get_pubk_hash());
     assert_eq!(
         config.dial_addr(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
