@@ -141,7 +141,7 @@ impl BrokerNode {
         broker_settings: BrokerSettings,
     ) -> Result<Self, BrokerError> {
         let local_id = Identifier {
-            pubkey_hash: Cert::new_with_privk(server_privk)?.get_pubk_hash()?,
+            pubkey_hash: Cert::new_with_privk(server_privk)?.get_pubk_hash(),
             id: COMMS_ID,
         };
 
@@ -581,9 +581,8 @@ impl BrokerNode {
     }
 
     /// Hash of the certificate this node presents, which is how a remote peer addresses its server.
-    pub fn get_pubk_hash(&self) -> Result<PubkHash, BrokerError> {
-        let pubk_hash = self.cert.get_pubk_hash()?;
-        Ok(pubk_hash)
+    pub fn get_pubk_hash(&self) -> PubkHash {
+        self.cert.get_pubk_hash()
     }
 
     /// The destination this node reads messages for, and the sender it stamps on what it sends.
@@ -813,7 +812,7 @@ mod tests {
         broker_node1
             .send_peer(
                 CTX,
-                &broker_node2.get_pubk_hash().unwrap(),
+                &broker_node2.get_pubk_hash(),
                 broker_node2.get_address(),
                 msg.clone(),
             )
@@ -826,7 +825,7 @@ mod tests {
         assert_msgs_received(
             &received_msgs,
             &vec![msg],
-            &vec![broker_node1.get_pubk_hash().unwrap()],
+            &vec![broker_node1.get_pubk_hash()],
         );
 
         // Close and cleanup
@@ -852,7 +851,7 @@ mod tests {
         broker_node1
             .send_peer(
                 CTX,
-                &broker_node2.get_pubk_hash().unwrap(),
+                &broker_node2.get_pubk_hash(),
                 broker_node2.get_address(),
                 msg1.clone(),
             )
@@ -860,7 +859,7 @@ mod tests {
         broker_node2
             .send_peer(
                 CTX,
-                &broker_node1.get_pubk_hash().unwrap(),
+                &broker_node1.get_pubk_hash(),
                 broker_node1.get_address(),
                 msg2.clone(),
             )
@@ -876,13 +875,13 @@ mod tests {
         assert_msgs_received(
             &received_msgs1,
             &vec![msg2],
-            &vec![broker_node2.get_pubk_hash().unwrap()],
+            &vec![broker_node2.get_pubk_hash()],
         );
 
         assert_msgs_received(
             &received_msgs2,
             &vec![msg1],
-            &vec![broker_node1.get_pubk_hash().unwrap()],
+            &vec![broker_node1.get_pubk_hash()],
         );
 
         // Close and cleanup
@@ -908,7 +907,7 @@ mod tests {
         broker_node1
             .send_peer(
                 CTX,
-                &broker_node2.get_pubk_hash().unwrap(),
+                &broker_node2.get_pubk_hash(),
                 broker_node2.get_address(),
                 msg.clone(),
             )
@@ -931,7 +930,7 @@ mod tests {
         assert_msgs_received(
             &received_msgs,
             &vec![msg],
-            &vec![broker_node1.get_pubk_hash().unwrap()],
+            &vec![broker_node1.get_pubk_hash()],
         );
 
         // Close and cleanup
@@ -958,15 +957,10 @@ mod tests {
         for i in 0..15u8 {
             let msg = format!("msg-{}", i);
             sent_msgs.push(msg.clone());
-            expected_hashes.push(sender.get_pubk_hash().unwrap());
+            expected_hashes.push(sender.get_pubk_hash());
 
             sender
-                .send_peer(
-                    CTX,
-                    &receiver.get_pubk_hash().unwrap(),
-                    receiver.get_address(),
-                    msg,
-                )
+                .send_peer(CTX, &receiver.get_pubk_hash(), receiver.get_address(), msg)
                 .unwrap();
         }
 
@@ -1024,7 +1018,7 @@ mod tests {
             sender
                 .send_peer(
                     CTX,
-                    &receiver1.get_pubk_hash().unwrap(),
+                    &receiver1.get_pubk_hash(),
                     receiver1.get_address(),
                     msg1.clone(),
                 )
@@ -1033,7 +1027,7 @@ mod tests {
             sender
                 .send_peer(
                     CTX,
-                    &receiver2.get_pubk_hash().unwrap(),
+                    &receiver2.get_pubk_hash(),
                     receiver2.get_address(),
                     msg2.clone(),
                 )
@@ -1098,7 +1092,7 @@ mod tests {
 
         // Close receiver server to simulate disconnection
         let receiver_addr = receiver.get_address();
-        let receiver_pubk_hash = receiver.get_pubk_hash().unwrap();
+        let receiver_pubk_hash = receiver.get_pubk_hash();
         receiver.close();
         drop(receiver);
 
@@ -1161,13 +1155,13 @@ mod tests {
         let address = bitvmx.get_address();
         let config = BrokerConfig::new(address.port(), Some(address.ip()), Some(settings));
         let emulator_cert = Cert::new_with_privk(PRIVK2).unwrap();
-        let emulator_id = Identifier::new(emulator_cert.get_pubk_hash().unwrap(), 0);
+        let emulator_id = Identifier::new(emulator_cert.get_pubk_hash(), 0);
         let emulator = RemoteChannel::new(
             &config,
             emulator_cert,
             Some(0),
             allow_list,
-            bitvmx.get_pubk_hash().unwrap(),
+            bitvmx.get_pubk_hash(),
         )
         .unwrap();
 
@@ -1216,7 +1210,7 @@ mod tests {
             sender
                 .send_peer(
                     CTX,
-                    &receiver.get_pubk_hash().unwrap(),
+                    &receiver.get_pubk_hash(),
                     receiver.get_address(),
                     format!("msg-{}", i),
                 )
@@ -1230,7 +1224,7 @@ mod tests {
         assert_msgs_received(
             &first,
             &vec!["msg-0".to_string(), "msg-1".to_string()],
-            &vec![sender.get_pubk_hash().unwrap(); 2],
+            &vec![sender.get_pubk_hash(); 2],
         );
 
         // A cap larger than what is waiting takes what there is, without ticking again.
@@ -1242,7 +1236,7 @@ mod tests {
                 "msg-3".to_string(),
                 "msg-4".to_string(),
             ],
-            &vec![sender.get_pubk_hash().unwrap(); 3],
+            &vec![sender.get_pubk_hash(); 3],
         );
 
         assert!(receiver.check_receive(None).unwrap().is_empty());
@@ -1266,7 +1260,7 @@ mod tests {
 
         let poison_key = format!(
             "broker/inqueue/testqueue/msgs/0/{}/not-an-id",
-            sender.get_pubk_hash().unwrap()
+            sender.get_pubk_hash()
         );
         receiver.storage.set(&poison_key, "unreadable").unwrap();
 
@@ -1274,7 +1268,7 @@ mod tests {
             sender
                 .send_peer(
                     CTX,
-                    &receiver.get_pubk_hash().unwrap(),
+                    &receiver.get_pubk_hash(),
                     receiver.get_address(),
                     format!("msg-{}", i),
                 )
@@ -1287,7 +1281,7 @@ mod tests {
         assert_msgs_received(
             &received,
             &vec!["msg-0".to_string(), "msg-1".to_string()],
-            &vec![sender.get_pubk_hash().unwrap(); 2],
+            &vec![sender.get_pubk_hash(); 2],
         );
         assert!(
             receiver.storage.get(&poison_key).unwrap().is_none(),
@@ -1337,11 +1331,8 @@ mod tests {
         .unwrap();
 
         // The identity comes from the key file, not from anything the caller passed separately.
-        let expected_hash = Cert::new_with_privk(PRIVK1)
-            .unwrap()
-            .get_pubk_hash()
-            .unwrap();
-        assert_eq!(peers.get_pubk_hash().unwrap(), expected_hash);
+        let expected_hash = Cert::new_with_privk(PRIVK1).unwrap().get_pubk_hash();
+        assert_eq!(peers.get_pubk_hash(), expected_hash);
         assert_eq!(peers.get_address(), peer_info.address);
         assert_eq!(
             peers.get_local_id(),
