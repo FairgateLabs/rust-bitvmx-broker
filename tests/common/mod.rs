@@ -47,7 +47,7 @@ impl BrokerConfigTestExt for BrokerConfig {
         server_ip: Option<IpAddr>,
     ) -> Result<(Self, Identifier, Cert), BrokerError> {
         let cert = Cert::new_simple()?;
-        let identifier = Identifier::new(cert.get_pubk_hash()?, bitvmx_broker::settings::SERVER_ID);
+        let identifier = Identifier::new(cert.get_pubk_hash(), bitvmx_broker::settings::SERVER_ID);
         Ok((Self::new(server_port, server_ip, None), identifier, cert))
     }
 }
@@ -74,7 +74,7 @@ impl RemoteChannelTestExt for RemoteChannel {
             .lock_or_err::<BrokerError>("allow_list")?
             .set_allow_all(true);
         let my_identifier = Identifier {
-            pubkey_hash: my_cert.get_pubk_hash()?,
+            pubkey_hash: my_cert.get_pubk_hash(),
             id: my_id,
         };
         Ok((

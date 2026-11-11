@@ -28,7 +28,7 @@ impl RemoteChannel {
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
         let client = BrokerClient::new(config, my_cert.clone(), allow_list)?;
         let my_id = Identifier {
-            pubkey_hash: my_cert.get_pubk_hash()?,
+            pubkey_hash: my_cert.get_pubk_hash(),
             id: my_id.unwrap_or(0), // Default to 0 if not provided
         };
         let server_id = Identifier::new(server_pubk_hash, SERVER_ID);
@@ -49,7 +49,7 @@ impl RemoteChannel {
     ) -> Result<Self, crate::rpc::errors::BrokerError> {
         let client = BrokerClient::new_with_runtime(config, my_cert.clone(), allow_list, rt)?;
         let my_id = Identifier {
-            pubkey_hash: my_cert.get_pubk_hash()?,
+            pubkey_hash: my_cert.get_pubk_hash(),
             id: my_id.unwrap_or(0), // Default to 0 if not provided
         };
         let server_id = Identifier::new(server_pubk_hash, SERVER_ID);
