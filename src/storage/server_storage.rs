@@ -13,7 +13,7 @@ use crate::storage::errors::BrokerStorageError;
 use std::sync::{Arc, Mutex};
 use storage_backend::{
     key::StorageKey,
-    storage::{KeyValueStore, Storage},
+    storage::Storage,
     storage_config::StorageConfig,
 };
 
